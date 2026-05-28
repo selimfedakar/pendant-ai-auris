@@ -1,0 +1,10 @@
+{
+  "name": "auris",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "app": "cd app && npx expo start --port 8082",
+    "backend:dev": "cd backend && wrangler dev",
+    "backend:deploy": "cd backend && wrangler deploy"
+  }
+}

@@ -1,0 +1,670 @@
+import { Hono } from "hono";
+import { cors } from "hono/cors";
+
+type Message = { role: "user" | "assistant"; content: string };
+
+type Env = {
+  ANTHROPIC_API_KEY: string;
+  OPENAI_API_KEY: string;
+  GROQ_API_KEY: string;
+  AURIS_API_KEY: string;
+  CONVERSATIONS: KVNamespace;
+};
+
+const app = new Hono<{ Bindings: Env }>();
+
+app.use(
+  "*",
+  cors({
+    origin: "*",
+    allowMethods: ["GET", "POST", "OPTIONS"],
+    allowHeaders: ["Content-Type", "Authorization", "X-Auris-Key"],
+  })
+);
+
+// Auth middleware — applied only to /v1/* routes
+app.use("/v1/*", async (c, next) => {
+  const expectedKey = c.env.AURIS_API_KEY;
+  if (expectedKey) {
+    const provided = c.req.header("X-Auris-Key");
+    if (provided !== expectedKey) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+  }
+  await next();
+});
+
+app.get("/", (c) => c.json({ status: "ok", service: "auris-backend" }));
+app.get("/health", (c) =>
+  c.json({ status: "healthy", timestamp: new Date().toISOString() })
+);
+
+const PERSONALITY_PROMPTS: Record<string, string> = {
+  companion:
+    "You are Auris, a warm and supportive AI companion. Be empathetic, encouraging, and conversational. Keep responses concise (2-3 sentences) and natural for voice.",
+  professional:
+    "You are Auris, a sharp professional AI assistant. Be precise, efficient, and business-focused. Keep responses concise (2-3 sentences) and actionable.",
+  casual:
+    "You are Auris, a chill and friendly AI. Be relaxed, use light humor, and keep things simple. Keep responses concise (2-3 sentences) and fun.",
+  mentor:
+    "You are Auris, a wise AI mentor. Be thoughtful, insightful, and guide the user to grow. Keep responses concise (2-3 sentences) and inspiring.",
+  focus:
+    "You are Auris, a focused productivity AI. Be direct, minimal, and help the user stay on track. Keep responses concise (1-2 sentences) and sharp.",
+};
+
+async function loadHistory(kv: KVNamespace | undefined, userId: string): Promise<Message[]> {
+  if (!kv) return [];
+  try {
+    const raw = await kv.get(userId);
+    return raw ? (JSON.parse(raw) as Message[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function saveHistory(kv: KVNamespace | undefined, userId: string, messages: Message[]): Promise<void> {
+  if (!kv) return;
+  try {
+    await kv.put(userId, JSON.stringify(messages.slice(-20)), {
+      expirationTtl: 60 * 60 * 24 * 30,
+    });
+  } catch {
+    // non-fatal
+  }
+}
+
+async function transcribeAudio(audioBlob: Blob, groqApiKey: string): Promise<string> {
+  // Guard: reject blobs too small to contain valid audio (corrupted or silent recording).
+  if (audioBlob.size < 1000) {
+    throw new Error(`Audio too short (${audioBlob.size} bytes) — please speak for at least 1 second`);
+  }
+
+  // Use 3-arg FormData.append so the part carries Content-Disposition: filename="audio.wav".
+  // Groq uses the file extension to determine the codec. WAV (Linear PCM) avoids M4A container
+  // issues that occur on iOS simulator. Do NOT use new File([blob], ...) — unreliable in edge runtimes.
+  const formData = new FormData();
+  formData.append("file", audioBlob, "audio.wav");
+  formData.append("model", "whisper-large-v3-turbo");
+  formData.append("response_format", "json");
+
+  const response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${groqApiKey}` },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Groq STT failed (${response.status}): ${errText}`);
+  }
+
+  const data = (await response.json()) as { text: string };
+  return data.text.trim();
+}
+
+type DetectedEvent = { title: string; datetime: string; participants: string[] };
+type ReplyResult = { reply: string; todos: string[]; events: DetectedEvent[] };
+
+function detectionSuffix(): string {
+  const now = new Date().toISOString();
+  return (
+    `Today's date and time is ${now}. ` +
+    `If the user mentions tasks they need to do OR any scheduled meetings/events/appointments, ` +
+    `append this exact JSON at the very end of your response: ` +
+    `{"todos":["task1"],"events":[{"title":"Event title","datetime":"2026-05-29T14:00:00","participants":["name1"]}]}. ` +
+    `Include only the arrays that have items (omit "todos" key if no tasks, omit "events" key if no events). ` +
+    `Do not include this JSON if nothing was detected.`
+  );
+}
+
+function parseDetectionJson(full: string): { reply: string; todos: string[]; events: DetectedEvent[] } {
+  const jsonMatch = full.match(/(\{"(?:todos|events)"[\s\S]*\})\s*$/);
+  let reply = full;
+  let todos: string[] = [];
+  let events: DetectedEvent[] = [];
+  if (jsonMatch) {
+    reply = full.slice(0, jsonMatch.index).trimEnd();
+    try {
+      const parsed = JSON.parse(jsonMatch[1]) as { todos?: string[]; events?: DetectedEvent[] };
+      todos = Array.isArray(parsed.todos) ? parsed.todos : [];
+      events = Array.isArray(parsed.events) ? parsed.events : [];
+    } catch {
+      // malformed JSON — ignore
+    }
+  }
+  return { reply, todos, events };
+}
+
+type ContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; source: { type: "base64"; media_type: "image/jpeg"; data: string } };
+
+type ApiMessage = { role: "user" | "assistant"; content: string | ContentBlock[] };
+
+async function generateReply(
+  transcript: string,
+  history: Message[],
+  personality: string,
+  userName: string,
+  userProfession: string,
+  anthropicApiKey: string,
+  imageBase64?: string | null,
+  contextData?: string,
+): Promise<ReplyResult> {
+  const basePrompt = PERSONALITY_PROMPTS[personality] ?? PERSONALITY_PROMPTS.companion;
+
+  const contextLines: string[] = [basePrompt];
+  if (userName) contextLines.push(`The user's name is ${userName}.`);
+  if (userProfession) contextLines.push(`Their profession is ${userProfession}.`);
+  if (contextData) contextLines.push(`Relevant context for this conversation: ${contextData}`);
+  contextLines.push("Respond in the same language the user speaks.");
+  contextLines.push(detectionSuffix());
+
+  const systemPrompt = contextLines.join(" ");
+
+  const userContent: string | ContentBlock[] = imageBase64
+    ? [
+        { type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageBase64 } },
+        { type: "text", text: transcript },
+      ]
+    : transcript;
+
+  const messages: ApiMessage[] = [
+    ...(history as ApiMessage[]),
+    { role: "user", content: userContent },
+  ];
+
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": anthropicApiKey,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 400,
+      system: systemPrompt,
+      messages,
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Claude LLM failed: ${response.status} — ${err}`);
+  }
+
+  const data = (await response.json()) as {
+    content: Array<{ type: string; text: string }>;
+  };
+  const textBlock = data.content.find((b) => b.type === "text");
+  const full = textBlock?.text ?? "";
+
+  const { reply, todos, events } = parseDetectionJson(full);
+  return { reply, todos, events };
+}
+
+async function synthesizeSpeech(text: string, openaiApiKey: string): Promise<ArrayBuffer> {
+  const response = await fetch("https://api.openai.com/v1/audio/speech", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${openaiApiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "tts-1",
+      voice: "nova",
+      input: text,
+      response_format: "mp3",
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`OpenAI TTS failed: ${response.status} — ${err}`);
+  }
+
+  return response.arrayBuffer();
+}
+
+async function collectClaudeStream(body: ReadableStream<Uint8Array>): Promise<string> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let fullText = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value, { stream: true });
+      const lines = chunk.split("\n");
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const data = line.slice(6).trim();
+        if (data === "[DONE]") continue;
+
+        let parsed: any;
+        try { parsed = JSON.parse(data); } catch { continue; }
+
+        if (
+          parsed.type === "content_block_delta" &&
+          parsed.delta?.type === "text_delta"
+        ) {
+          fullText += parsed.delta.text ?? "";
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return fullText;
+}
+
+function splitIntoSentences(text: string): string[] {
+  const results: string[] = [];
+  let buffer = "";
+
+  for (let i = 0; i < text.length; i++) {
+    buffer += text[i];
+
+    const atSentenceEnd =
+      (text[i] === "." || text[i] === "!" || text[i] === "?") &&
+      (i + 1 >= text.length || text[i + 1] === " " || text[i + 1] === "\n");
+
+    if (atSentenceEnd) {
+      const trimmed = buffer.trim();
+      if (trimmed) results.push(trimmed);
+      buffer = "";
+      if (i + 1 < text.length && text[i + 1] === " ") i++;
+      continue;
+    }
+
+    if (text[i] === "," && buffer.trim().length >= 40) {
+      const trimmed = buffer.trim();
+      if (trimmed) results.push(trimmed);
+      buffer = "";
+    }
+  }
+
+  const remaining = buffer.trim();
+  if (remaining) results.push(remaining);
+
+  return results;
+}
+
+function base64ToUint8Array(base64: string): Uint8Array {
+  // Use Buffer (available via nodejs_compat flag) — reliable, handles padding/whitespace,
+  // and avoids the slow charCode loop that caused truncation on large audio files.
+  const clean = base64.replace(/[\s\r\n]/g, "");
+  const buf = Buffer.from(clean, "base64");
+  return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+}
+
+function base64ToBlob(base64: string, mimeType: string): Blob {
+  return new Blob([base64ToUint8Array(base64)], { type: mimeType });
+}
+
+// JSON body variants — avoid React Native FormData file-upload issues on device.
+
+app.post("/v1/process-audio-json", async (c) => {
+  let body: Record<string, string>;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+
+  const audioBase64 = body.audio_base64;
+  const userId = body.user_id ?? "anonymous";
+  const personality = (body.personality ?? "companion").toLowerCase();
+  const userName = body.user_name ?? "";
+  const userProfession = body.user_profession ?? "";
+  const imageBase64 = body.image_base64 || null;
+  const contextData = body.context_data || undefined;
+
+  if (!audioBase64) return c.json({ error: "Missing audio_base64" }, 400);
+
+  try {
+    const audioBlob = base64ToBlob(audioBase64, "audio/wav");
+
+    const [transcript, history] = await Promise.all([
+      transcribeAudio(audioBlob, c.env.GROQ_API_KEY),
+      loadHistory(c.env.CONVERSATIONS, userId),
+    ]);
+
+    if (!transcript) return c.json({ error: "No speech detected in audio" }, 422);
+
+    const { reply, todos, events } = await generateReply(
+      transcript,
+      history,
+      personality,
+      userName,
+      userProfession,
+      c.env.ANTHROPIC_API_KEY,
+      imageBase64,
+      contextData,
+    );
+
+    await saveHistory(c.env.CONVERSATIONS, userId, [
+      ...history,
+      { role: "user", content: transcript },
+      { role: "assistant", content: reply },
+    ]);
+
+    const audioBuffer = await synthesizeSpeech(reply, c.env.OPENAI_API_KEY);
+
+    return new Response(audioBuffer, {
+      status: 200,
+      headers: {
+        "Content-Type": "audio/mpeg",
+        "X-Transcript": encodeURIComponent(transcript),
+        "X-Reply": encodeURIComponent(reply),
+        "X-User-Id": userId,
+        "X-Personality": personality,
+        ...(todos.length > 0 && { "X-Todos": encodeURIComponent(JSON.stringify(todos)) }),
+        ...(events.length > 0 && { "X-Events": encodeURIComponent(JSON.stringify(events)) }),
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("process-audio-json error:", message);
+    return c.json({ error: message }, 500);
+  }
+});
+
+app.post("/v1/process-audio-stream-json", async (c) => {
+  let body: Record<string, string>;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+
+  const audioBase64 = body.audio_base64;
+  const userId = body.user_id ?? "anonymous";
+  const personality = (body.personality ?? "companion").toLowerCase();
+  const userName = body.user_name ?? "";
+  const userProfession = body.user_profession ?? "";
+  const contextData = body.context_data || undefined;
+
+  if (!audioBase64) return c.json({ error: "Missing audio_base64" }, 400);
+
+  try {
+    const audioBlob = base64ToBlob(audioBase64, "audio/wav");
+
+    const [transcript, history] = await Promise.all([
+      transcribeAudio(audioBlob, c.env.GROQ_API_KEY),
+      loadHistory(c.env.CONVERSATIONS, userId),
+    ]);
+
+    if (!transcript) return c.json({ error: "No speech detected in audio" }, 422);
+
+    const basePrompt = PERSONALITY_PROMPTS[personality] ?? PERSONALITY_PROMPTS.companion;
+    const contextLines: string[] = [basePrompt];
+    if (userName) contextLines.push(`The user's name is ${userName}.`);
+    if (userProfession) contextLines.push(`Their profession is ${userProfession}.`);
+    if (contextData) contextLines.push(`Relevant context for this conversation: ${contextData}`);
+    contextLines.push("Respond in the same language the user speaks.");
+    contextLines.push(detectionSuffix());
+    const systemPrompt = contextLines.join(" ");
+    const messages: Message[] = [...history, { role: "user", content: transcript }];
+
+    const claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": c.env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 400,
+        system: systemPrompt,
+        messages,
+        stream: true,
+      }),
+    });
+
+    if (!claudeResponse.ok || !claudeResponse.body) {
+      const err = await claudeResponse.text();
+      throw new Error(`Claude LLM failed: ${claudeResponse.status} — ${err}`);
+    }
+
+    const fullRawReply = await collectClaudeStream(claudeResponse.body);
+    const { reply, todos, events } = parseDetectionJson(fullRawReply);
+
+    saveHistory(c.env.CONVERSATIONS, userId, [
+      ...history,
+      { role: "user", content: transcript },
+      { role: "assistant", content: reply },
+    ]).catch(() => {});
+
+    const sentences = splitIntoSentences(reply).filter((s) => s.length > 0);
+    const openaiApiKey = c.env.OPENAI_API_KEY;
+    const ttsPromises: Promise<ArrayBuffer | null>[] = sentences.map((sentence) =>
+      synthesizeSpeech(sentence, openaiApiKey).catch(() => null)
+    );
+
+    const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+    const writer = writable.getWriter();
+
+    const writeChunks = async () => {
+      for (const ttsPromise of ttsPromises) {
+        const buffer = await ttsPromise;
+        if (buffer) await writer.write(new Uint8Array(buffer));
+      }
+      await writer.close();
+    };
+
+    writeChunks().catch(async (err) => {
+      console.error("process-audio-stream-json write error:", err instanceof Error ? err.message : err);
+      try { await writer.abort(err); } catch { /* ignore */ }
+    });
+
+    return new Response(readable as unknown as ReadableStream<Uint8Array>, {
+      status: 200,
+      headers: {
+        "Content-Type": "audio/mpeg",
+        "Transfer-Encoding": "chunked",
+        "X-Transcript": encodeURIComponent(transcript),
+        "X-Reply": encodeURIComponent(reply),
+        ...(todos.length > 0 && { "X-Todos": encodeURIComponent(JSON.stringify(todos)) }),
+        ...(events.length > 0 && { "X-Events": encodeURIComponent(JSON.stringify(events)) }),
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("process-audio-stream-json error:", message);
+    return c.json({ error: message }, 500);
+  }
+});
+
+// Legacy FormData endpoints kept for compatibility
+app.post("/v1/process-audio-stream", async (c) => {
+  let formData: FormData;
+  try {
+    formData = await c.req.formData();
+  } catch {
+    return c.json({ error: "Invalid multipart form data" }, 400);
+  }
+
+  const audioFileRaw = formData.get("audio");
+  const userId = (formData.get("user_id") as string) ?? "anonymous";
+  const personality = ((formData.get("personality") as string) ?? "companion").toLowerCase();
+  const userName = (formData.get("user_name") as string) ?? "";
+  const userProfession = (formData.get("user_profession") as string) ?? "";
+
+  if (!audioFileRaw || typeof audioFileRaw === "string") {
+    return c.json({ error: "Missing audio file in form data" }, 400);
+  }
+  const audioFile = audioFileRaw as File;
+
+  try {
+    const audioBlob = new Blob([await audioFile.arrayBuffer()], {
+      type: audioFile.type || "audio/mp4",
+    });
+
+    const [transcript, history] = await Promise.all([
+      transcribeAudio(audioBlob, c.env.GROQ_API_KEY),
+      loadHistory(c.env.CONVERSATIONS, userId),
+    ]);
+
+    if (!transcript) {
+      return c.json({ error: "No speech detected in audio" }, 422);
+    }
+
+    const basePrompt = PERSONALITY_PROMPTS[personality] ?? PERSONALITY_PROMPTS.companion;
+    const contextLines: string[] = [basePrompt];
+    if (userName) contextLines.push(`The user's name is ${userName}.`);
+    if (userProfession) contextLines.push(`Their profession is ${userProfession}.`);
+    contextLines.push("Respond in the same language the user speaks.");
+    contextLines.push(detectionSuffix());
+    const systemPrompt = contextLines.join(" ");
+    const messages: Message[] = [...history, { role: "user", content: transcript }];
+
+    const claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": c.env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 400,
+        system: systemPrompt,
+        messages,
+        stream: true,
+      }),
+    });
+
+    if (!claudeResponse.ok || !claudeResponse.body) {
+      const err = await claudeResponse.text();
+      throw new Error(`Claude LLM failed: ${claudeResponse.status} — ${err}`);
+    }
+
+    const fullRawReply = await collectClaudeStream(claudeResponse.body);
+    const { reply, todos, events } = parseDetectionJson(fullRawReply);
+
+    saveHistory(c.env.CONVERSATIONS, userId, [
+      ...history,
+      { role: "user", content: transcript },
+      { role: "assistant", content: reply },
+    ]).catch(() => {});
+
+    const sentences = splitIntoSentences(reply).filter((s) => s.length > 0);
+    const openaiApiKey = c.env.OPENAI_API_KEY;
+    const ttsPromises: Promise<ArrayBuffer | null>[] = sentences.map((sentence) =>
+      synthesizeSpeech(sentence, openaiApiKey).catch(() => null)
+    );
+
+    const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+    const writer = writable.getWriter();
+
+    const writeChunks = async () => {
+      for (const ttsPromise of ttsPromises) {
+        const buffer = await ttsPromise;
+        if (buffer) await writer.write(new Uint8Array(buffer));
+      }
+      await writer.close();
+    };
+
+    writeChunks().catch(async (err) => {
+      console.error("process-audio-stream write error:", err instanceof Error ? err.message : err);
+      try { await writer.abort(err); } catch { /* ignore */ }
+    });
+
+    return new Response(readable as unknown as ReadableStream<Uint8Array>, {
+      status: 200,
+      headers: {
+        "Content-Type": "audio/mpeg",
+        "Transfer-Encoding": "chunked",
+        "X-Transcript": encodeURIComponent(transcript),
+        "X-Reply": encodeURIComponent(reply),
+        ...(todos.length > 0 && { "X-Todos": encodeURIComponent(JSON.stringify(todos)) }),
+        ...(events.length > 0 && { "X-Events": encodeURIComponent(JSON.stringify(events)) }),
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("process-audio-stream error:", message);
+    return c.json({ error: message }, 500);
+  }
+});
+
+app.post("/v1/process-audio", async (c) => {
+  let formData: FormData;
+  try {
+    formData = await c.req.formData();
+  } catch {
+    return c.json({ error: "Invalid multipart form data" }, 400);
+  }
+
+  const audioFileRaw2 = formData.get("audio");
+  const userId = (formData.get("user_id") as string) ?? "anonymous";
+  const personality = ((formData.get("personality") as string) ?? "companion").toLowerCase();
+  const userName = (formData.get("user_name") as string) ?? "";
+  const userProfession = (formData.get("user_profession") as string) ?? "";
+  const imageBase64 = (formData.get("image_base64") as string | null) || null;
+
+  if (!audioFileRaw2 || typeof audioFileRaw2 === "string") {
+    return c.json({ error: "Missing audio file in form data" }, 400);
+  }
+  const audioFile2 = audioFileRaw2 as File;
+
+  try {
+    const audioBlob = new Blob([await audioFile2.arrayBuffer()], {
+      type: audioFile2.type || "audio/mp4",
+    });
+
+    const [transcript, history] = await Promise.all([
+      transcribeAudio(audioBlob, c.env.GROQ_API_KEY),
+      loadHistory(c.env.CONVERSATIONS, userId),
+    ]);
+
+    if (!transcript) {
+      return c.json({ error: "No speech detected in audio" }, 422);
+    }
+
+    const { reply, todos, events } = await generateReply(
+      transcript,
+      history,
+      personality,
+      userName,
+      userProfession,
+      c.env.ANTHROPIC_API_KEY,
+      imageBase64
+    );
+
+    const updatedHistory: Message[] = [
+      ...history,
+      { role: "user", content: transcript },
+      { role: "assistant", content: reply },
+    ];
+    await saveHistory(c.env.CONVERSATIONS, userId, updatedHistory);
+
+    const audioBuffer = await synthesizeSpeech(reply, c.env.OPENAI_API_KEY);
+
+    return new Response(audioBuffer, {
+      status: 200,
+      headers: {
+        "Content-Type": "audio/mpeg",
+        "X-Transcript": encodeURIComponent(transcript),
+        "X-Reply": encodeURIComponent(reply),
+        "X-User-Id": userId,
+        "X-Personality": personality,
+        ...(todos.length > 0 && { "X-Todos": encodeURIComponent(JSON.stringify(todos)) }),
+        ...(events.length > 0 && { "X-Events": encodeURIComponent(JSON.stringify(events)) }),
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("process-audio error:", message);
+    return c.json({ error: message }, 500);
+  }
+});
+
+export default app;

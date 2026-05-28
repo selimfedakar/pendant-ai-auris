@@ -1,0 +1,13 @@
+name = "auris-backend"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+workers_dev = true
+
+[vars]
+ENVIRONMENT = "production"
+
+[[kv_namespaces]]
+binding = "CONVERSATIONS"
+id = "f56efb1edefc4d7496b4531faccb94f5"

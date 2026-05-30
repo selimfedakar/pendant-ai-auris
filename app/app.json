@@ -20,7 +20,8 @@
         "NSLocationWhenInUseUsageDescription": "Auris uses your location to suggest nearby places.",
         "NSCalendarsUsageDescription": "Auris can add events to your calendar from conversations.",
         "NSCalendarsFullAccessUsageDescription": "Auris can read and add events to your calendar.",
-        "NSCameraUsageDescription": "Auris uses the camera to understand your environment."
+        "NSCameraUsageDescription": "Auris uses the camera to understand your environment.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -48,6 +49,7 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      "./plugins/withDevClientBundleURL",
       "expo-router",
       "expo-camera",
       [

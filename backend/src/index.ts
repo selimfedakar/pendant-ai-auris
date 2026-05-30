@@ -231,31 +231,34 @@ async function collectClaudeStream(body: ReadableStream<Uint8Array>): Promise<st
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let fullText = "";
+  // Buffer carries the tail of a chunk that may be an incomplete SSE line.
+  // Without this, a "data: {...}" line split across two chunks is silently discarded.
+  let lineBuffer = "";
+
+  const processLine = (raw: string) => {
+    const line = raw.trimEnd(); // strip trailing \r from \r\n endings
+    if (!line.startsWith("data: ")) return;
+    const data = line.slice(6).trim();
+    if (data === "[DONE]") return;
+    let parsed: any;
+    try { parsed = JSON.parse(data); } catch { return; }
+    if (parsed.type === "content_block_delta" && parsed.delta?.type === "text_delta") {
+      fullText += parsed.delta.text ?? "";
+    }
+  };
 
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
-      const chunk = decoder.decode(value, { stream: true });
-      const lines = chunk.split("\n");
-
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        const data = line.slice(6).trim();
-        if (data === "[DONE]") continue;
-
-        let parsed: any;
-        try { parsed = JSON.parse(data); } catch { continue; }
-
-        if (
-          parsed.type === "content_block_delta" &&
-          parsed.delta?.type === "text_delta"
-        ) {
-          fullText += parsed.delta.text ?? "";
-        }
-      }
+      lineBuffer += decoder.decode(value, { stream: true });
+      const lines = lineBuffer.split("\n");
+      lineBuffer = lines.pop() ?? ""; // keep the potentially incomplete last line
+      for (const line of lines) processLine(line);
     }
+    // Flush any remaining content
+    for (const line of lineBuffer.split("\n")) processLine(line);
   } finally {
     reader.releaseLock();
   }

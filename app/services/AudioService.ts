@@ -6,8 +6,8 @@ import {
   createAudioPlayer,
 } from 'expo-audio';
 import AudioModule from 'expo-audio/build/AudioModule';
-// RECORDING_STATUS_UPDATE is not re-exported by expo-audio's main index — import directly.
-import { RECORDING_STATUS_UPDATE } from 'expo-audio/build/AudioEventKeys';
+// These event keys are not re-exported by expo-audio's main index — import directly.
+import { RECORDING_STATUS_UPDATE, PLAYBACK_STATUS_UPDATE } from 'expo-audio/build/AudioEventKeys';
 
 const VAD_SILENCE_DB = -45;
 const VAD_SILENCE_MS = 1500;
@@ -137,8 +137,15 @@ class AudioService {
     this.player = player;
 
     await new Promise<void>((resolve) => {
-      const sub = player.addListener('playbackStatusUpdate', (status: any) => {
+      // 60s safety timeout — if didJustFinish never fires (empty/corrupt file), resolve anyway.
+      const timeout = setTimeout(() => {
+        sub.remove();
+        resolve();
+      }, 60000);
+
+      const sub = player.addListener(PLAYBACK_STATUS_UPDATE, (status: any) => {
         if (status.didJustFinish) {
+          clearTimeout(timeout);
           sub.remove();
           resolve();
         }
@@ -146,14 +153,14 @@ class AudioService {
       player.play();
     });
 
-    player.release();
+    try { player.remove(); } catch { /* ignore */ }
     this.player = null;
   }
 
   async stopPlayback(): Promise<void> {
     if (this.player) {
       try { this.player.pause(); } catch { /* ignore */ }
-      try { this.player.release(); } catch { /* ignore */ }
+      try { (this.player as any).remove?.(); } catch { /* ignore */ }
       this.player = null;
     }
   }

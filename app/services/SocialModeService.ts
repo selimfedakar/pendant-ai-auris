@@ -1,13 +1,22 @@
 import { audioService } from './AudioService';
 import { backendService } from './BackendService';
+import { notificationService } from './NotificationService';
 
 import { DetectedEvent } from './BackendService';
+
+const AMBIENT_SESSION_MS = 10 * 60 * 1000; // 10 minutes
 
 type Insight = {
   transcript: string;
   reply: string;
   todos: string[];
   events: DetectedEvent[];
+};
+
+type SessionEndPayload = {
+  summary: string;
+  durationMinutes: number;
+  transcriptCount: number;
 };
 
 class SocialModeService {
@@ -17,9 +26,29 @@ class SocialModeService {
   private userName: string | undefined;
   private userProfession: string | undefined;
   private insightCallback: ((insight: Insight) => void) | null = null;
+  private sessionEndCallback: ((payload: SessionEndPayload) => void) | null = null;
+
+  // Ambient session state
+  private sessionTimer: ReturnType<typeof setTimeout> | null = null;
+  private sessionTranscripts: string[] = [];
+  private sessionStartTime: number = 0;
 
   onInsight(cb: (insight: Insight) => void): void {
     this.insightCallback = cb;
+  }
+
+  onSessionEnd(cb: (payload: SessionEndPayload) => void): void {
+    this.sessionEndCallback = cb;
+  }
+
+  getElapsedSeconds(): number {
+    if (!this.active || !this.sessionStartTime) return 0;
+    return Math.floor((Date.now() - this.sessionStartTime) / 1000);
+  }
+
+  getRemainingSeconds(): number {
+    const elapsed = this.getElapsedSeconds();
+    return Math.max(0, Math.floor(AMBIENT_SESSION_MS / 1000) - elapsed);
   }
 
   async start(
@@ -34,19 +63,69 @@ class SocialModeService {
     this.personality = personality;
     this.userName = userName;
     this.userProfession = userProfession;
+    this.sessionTranscripts = [];
+    this.sessionStartTime = Date.now();
+
+    this.sessionTimer = setTimeout(() => this.endSession(), AMBIENT_SESSION_MS);
+
     await this.startCycle();
   }
 
   async stop(): Promise<void> {
     if (!this.active) return;
     this.active = false;
+    if (this.sessionTimer) {
+      clearTimeout(this.sessionTimer);
+      this.sessionTimer = null;
+    }
     if (audioService.isRecording()) {
-      try { await audioService.stopRecording(); } catch { /* recording may have already stopped */ }
+      try { await audioService.stopRecording(); } catch { /* ignore */ }
     }
   }
 
   isActive(): boolean {
     return this.active;
+  }
+
+  private async endSession(): Promise<void> {
+    const wasActive = this.active;
+    this.active = false;
+    this.sessionTimer = null;
+
+    if (audioService.isRecording()) {
+      try { await audioService.stopRecording(); } catch { /* ignore */ }
+    }
+
+    if (!wasActive || !this.sessionTranscripts.length) return;
+
+    const durationMinutes = Math.round((Date.now() - this.sessionStartTime) / 60000);
+    const context = this.sessionTranscripts.join('\n');
+
+    let summary = '';
+    try {
+      summary = await backendService.summarizeSession(
+        context,
+        this.personality,
+        this.userName,
+      );
+    } catch (err) {
+      console.error('[SocialMode] summarizeSession failed:', err);
+      summary = `Ambient session complete. ${this.sessionTranscripts.length} conversation segments captured.`;
+    }
+
+    const payload: SessionEndPayload = {
+      summary,
+      durationMinutes,
+      transcriptCount: this.sessionTranscripts.length,
+    };
+
+    this.sessionEndCallback?.(payload);
+
+    notificationService.scheduleLocal(
+      'Auris — Session Complete',
+      summary,
+      { type: 'ambient_summary' },
+    ).catch(() => {});
   }
 
   private async startCycle(): Promise<void> {
@@ -78,6 +157,11 @@ class SocialModeService {
         this.userName,
         this.userProfession,
       );
+
+      if (result.transcript) {
+        this.sessionTranscripts.push(result.transcript);
+      }
+
       this.insightCallback?.({
         transcript: result.transcript,
         reply: result.reply,
@@ -88,7 +172,6 @@ class SocialModeService {
       console.error('[SocialMode] processAudioStreaming failed:', err);
     }
 
-    // Always restart the cycle regardless of backend success or failure.
     await this.startCycle();
   }
 

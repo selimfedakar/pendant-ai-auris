@@ -86,8 +86,11 @@ class BackendService {
     }
 
     const { transcript, reply, todos, events } = this.parseAudioResponse(response);
+    const ttsSkipped = response.headers.get('X-TTS-Skipped') === '1';
     const buffer = await response.arrayBuffer();
-    const savedUri = await saveArrayBufferToFile(buffer, 'auris_response.mp3');
+    const savedUri = (!ttsSkipped && buffer.byteLength > 100)
+      ? await saveArrayBufferToFile(buffer, 'auris_response.mp3')
+      : '';
     return { transcript, reply, audioUri: savedUri, todos, events };
   }
 
@@ -120,8 +123,30 @@ class BackendService {
 
     const { transcript, reply, todos, events } = this.parseAudioResponse(response);
     const buffer = await response.arrayBuffer();
-    const savedUri = await saveArrayBufferToFile(buffer, 'auris_stream.mp3');
+    const savedUri = buffer.byteLength > 100
+      ? await saveArrayBufferToFile(buffer, 'auris_stream.mp3')
+      : '';
     return { transcript, reply, audioUri: savedUri, todos, events };
+  }
+
+  async summarizeSession(
+    context: string,
+    personality?: string,
+    userName?: string,
+  ): Promise<string> {
+    const body: Record<string, string> = { context };
+    if (personality) body.personality = personality;
+    if (userName) body.user_name = userName;
+
+    const response = await fetch(`${this.backendUrl}/v1/summarize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Auris-Key': AURIS_API_KEY },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) throw new Error(`Summarize failed: ${response.status}`);
+    const data = (await response.json()) as { summary: string };
+    return data.summary ?? '';
   }
 
   async processMultiModal(payload: {

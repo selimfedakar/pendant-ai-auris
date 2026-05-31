@@ -357,7 +357,14 @@ app.post("/v1/process-audio-json", async (c) => {
       { role: "assistant", content: reply },
     ]);
 
-    const audioBuffer = await synthesizeSpeech(reply, c.env.OPENAI_API_KEY);
+    let audioBuffer: ArrayBuffer = new ArrayBuffer(0);
+    let ttsSkipped = false;
+    try {
+      audioBuffer = await synthesizeSpeech(reply, c.env.OPENAI_API_KEY);
+    } catch (ttsErr) {
+      console.error("TTS failed (non-fatal):", ttsErr instanceof Error ? ttsErr.message : ttsErr);
+      ttsSkipped = true;
+    }
 
     return new Response(audioBuffer, {
       status: 200,
@@ -367,6 +374,7 @@ app.post("/v1/process-audio-json", async (c) => {
         "X-Reply": encodeURIComponent(reply),
         "X-User-Id": userId,
         "X-Personality": personality,
+        ...(ttsSkipped && { "X-TTS-Skipped": "1" }),
         ...(todos.length > 0 && { "X-Todos": encodeURIComponent(JSON.stringify(todos)) }),
         ...(events.length > 0 && { "X-Events": encodeURIComponent(JSON.stringify(events)) }),
       },
@@ -481,6 +489,59 @@ app.post("/v1/process-audio-stream-json", async (c) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("process-audio-stream-json error:", message);
+    return c.json({ error: message }, 500);
+  }
+});
+
+// Text-only summarize endpoint — used by ambient session at end of 10-min window
+app.post("/v1/summarize", async (c) => {
+  let body: Record<string, string>;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+
+  const context = body.context ?? "";
+  const personality = (body.personality ?? "companion").toLowerCase();
+  const userName = body.user_name ?? "";
+
+  if (!context) return c.json({ error: "Missing context" }, 400);
+
+  try {
+    const basePrompt = PERSONALITY_PROMPTS[personality] ?? PERSONALITY_PROMPTS.companion;
+    const systemLines = [
+      basePrompt,
+      userName ? `The user's name is ${userName}.` : "",
+      "You are summarizing an ambient listening session. Provide 2-3 concise bullet-point insights from what was overheard. Be direct and useful.",
+    ].filter(Boolean);
+
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": c.env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 300,
+        system: systemLines.join(" "),
+        messages: [{ role: "user", content: `Summarize this ambient session:\n${context}` }],
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.text();
+      throw new Error(`Claude failed: ${response.status} — ${err}`);
+    }
+
+    const data = (await response.json()) as { content: Array<{ type: string; text: string }> };
+    const summary = data.content.find((b) => b.type === "text")?.text ?? "";
+    return c.json({ summary });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("summarize error:", message);
     return c.json({ error: message }, 500);
   }
 });

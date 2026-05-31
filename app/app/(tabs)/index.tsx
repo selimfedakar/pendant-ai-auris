@@ -5,6 +5,8 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
+  withRepeat,
+  withSequence,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -47,7 +49,12 @@ export default function HomeScreen() {
 
   const [contextualSheetVisible, setContextualSheetVisible] = useState(false);
   const [activeModule, setActiveModule] = useState<string>('visual');
+  const [audioUnavailable, setAudioUnavailable] = useState(false);
   const streamingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Vision hint pulse animation
+  const visionHintOpacity = useSharedValue(0);
+  const visionHintStyle = useAnimatedStyle(() => ({ opacity: visionHintOpacity.value }));
 
   const [visionPanel, setVisionPanel] = useState<{
     imageBase64: string | null;
@@ -128,6 +135,21 @@ export default function HomeScreen() {
   }, []);
 
   useEffect(() => {
+    if (capturedImageBase64 && orbState === 'idle') {
+      visionHintOpacity.value = withRepeat(
+        withSequence(
+          withTiming(1, { duration: 700 }),
+          withTiming(0.25, { duration: 700 }),
+        ),
+        -1,
+        false,
+      );
+    } else {
+      visionHintOpacity.value = withTiming(0, { duration: 250 });
+    }
+  }, [capturedImageBase64, orbState]);
+
+  useEffect(() => {
     backendService.loadConfig();
     audioService.requestPermissions();
     notificationService.setup().catch(() => {});
@@ -181,6 +203,11 @@ export default function HomeScreen() {
       socialModeService.stop();
       return;
     }
+    socialModeService.onSessionEnd(({ summary, durationMinutes }) => {
+      setMode('solo');
+      addStreamingMessage(`Ambient session complete (${durationMinutes} min). ${summary}`);
+    });
+
     socialModeService.onInsight(async ({ transcript: t, reply, todos, events }) => {
       addMessage('auris', reply);
       notificationService.scheduleLocal('Auris', reply, { transcript: t, reply }).catch(() => {});
@@ -299,6 +326,7 @@ export default function HomeScreen() {
       // Ready for next input immediately — audio plays in background
       setOrbState('idle');
       isProcessingRef.current = false;
+      setAudioUnavailable(!audioUri && !!reply);
 
       if (audioUri) {
         audioService.playFromUri(audioUri).catch(() => {});
@@ -360,11 +388,23 @@ export default function HomeScreen() {
     }
   };
 
-  const handleModuleSelect = useCallback((moduleId: string) => {
+  const handleModuleSelect = useCallback(async (moduleId: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     setActiveModule(moduleId);
     setContextualSheetVisible(false);
-  }, []);
+
+    if (moduleId === 'calendar') {
+      const events = await calendarService.getUpcomingEventsContext().catch(() => null);
+      const msg = events
+        ? `Calendar sync activated. ${events}`
+        : 'Calendar sync activated. No upcoming events found in the next 7 days.';
+      addStreamingMessage(msg);
+    } else if (moduleId === 'visual') {
+      addStreamingMessage('Visual analysis module activated. Capture an image then tap the orb to analyze.');
+    } else if (moduleId === 'email') {
+      addStreamingMessage('Email Intel selected. Gmail connection required — setup coming soon.');
+    }
+  }, [addStreamingMessage]);
 
   const toggleMode = async () => {
     if (mode === 'social') {
@@ -429,6 +469,19 @@ export default function HomeScreen() {
         <AurisOrb state={orbState} onPress={handleOrbPress} onLongPress={handleOrbLongPress} />
       </View>
 
+      {/* Vision hint — pulses when image is captured and orb is idle */}
+      <Animated.View style={[styles.visionHintRow, visionHintStyle]} pointerEvents="none">
+        <Text style={styles.visionHint}>AURIS EYE READY  ·  TAP ORB TO ANALYZE</Text>
+      </Animated.View>
+
+      {/* Audio unavailable badge */}
+      {audioUnavailable && (
+        <Pressable style={styles.audioUnavailableRow} onPress={() => setAudioUnavailable(false)}>
+          <Ionicons name="volume-mute-outline" size={11} color="#888" />
+          <Text style={styles.audioUnavailableText}>audio unavailable · tap to dismiss</Text>
+        </Pressable>
+      )}
+
       {/* Orb hint */}
       <View style={styles.hintRow}>
         {orbState === 'idle' && activeModule === 'email' && (
@@ -439,9 +492,9 @@ export default function HomeScreen() {
             {audioService.isRecording() ? 'tap to send' : 'schedule-aware · tap to talk'}
           </Text>
         )}
-        {orbState === 'idle' && activeModule !== 'email' && activeModule !== 'calendar' && (
+        {orbState === 'idle' && !capturedImageBase64 && activeModule !== 'email' && activeModule !== 'calendar' && (
           <Text style={styles.hint}>
-            {audioService.isRecording() ? 'tap to send' : capturedImageBase64 ? 'tap to analyze' : 'tap to talk'}
+            {audioService.isRecording() ? 'tap to send' : 'tap to talk'}
           </Text>
         )}
         {orbState === 'listening' && (
@@ -563,6 +616,14 @@ const styles = StyleSheet.create({
   bubbleText: { color: theme.colors.textSecondary, fontSize: 14, lineHeight: 20 },
   bubbleTextAuris: { color: theme.colors.textPrimary },
   orbContainer: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  visionHintRow: { alignItems: 'center', paddingBottom: 4 },
+  visionHint: { color: '#A855F7', fontSize: 10, fontWeight: '600', letterSpacing: 1.4 },
+  audioUnavailableRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingHorizontal: 10, paddingVertical: 4, marginBottom: 4,
+    backgroundColor: '#88888815', borderRadius: 8, borderWidth: 0.5, borderColor: '#88888830',
+  },
+  audioUnavailableText: { color: '#888', fontSize: 10, letterSpacing: 0.5 },
   hintRow: { alignItems: 'center', paddingBottom: 10 },
   hint: { color: theme.colors.textTertiary, fontSize: 11, letterSpacing: 1 },
   // Camera button

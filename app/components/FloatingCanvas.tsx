@@ -78,10 +78,13 @@ function SideNode({ phase, onPress }: { phase: 0 | 1; onPress?: () => void }) {
 
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={onPress ? 0.7 : 1} disabled={!onPress}>
-      <Animated.View style={[styles.sideNodeWrapper, floatStyle]}>
-        <Animated.View style={[StyleSheet.absoluteFill, styles.sideNodeAura, auraStyle]} />
-        <View style={styles.sideNodeDiamond}>
-          <View style={styles.sideNodeCore} />
+      <Animated.View style={[styles.sideColumn, floatStyle]}>
+        <Text style={styles.sideLabel}>CONTEXTUAL{'\n'}ANALYSIS</Text>
+        <View style={styles.sideNodeWrapper}>
+          <Animated.View style={[StyleSheet.absoluteFill, styles.sideNodeAura, auraStyle]} />
+          <View style={styles.sideNodeDiamond}>
+            <View style={styles.sideNodeCore} />
+          </View>
         </View>
       </Animated.View>
     </TouchableOpacity>
@@ -211,6 +214,18 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.65,
   },
   // --- Side node ---
+  sideColumn: {
+    alignItems: 'center',
+    gap: 5,
+  },
+  sideLabel: {
+    fontSize: 7,
+    fontWeight: '600',
+    color: `${GOLD}70`,
+    letterSpacing: 1.1,
+    textAlign: 'center',
+    lineHeight: 10,
+  },
   sideNodeWrapper: {
     width: 56,
     height: 56,

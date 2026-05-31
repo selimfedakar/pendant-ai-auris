@@ -11,6 +11,8 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as Google from 'expo-auth-session/providers/google';
+import * as WebBrowser from 'expo-web-browser';
 import { AurisOrb, OrbState } from '@/components/AurisOrb';
 import { FloatingCanvas } from '@/components/FloatingCanvas';
 import { VisionAnalysis } from '@/components/VisionAnalysis';
@@ -23,8 +25,14 @@ import { historyService } from '@/services/HistoryService';
 import { socialModeService } from '@/services/SocialModeService';
 import { notificationService } from '@/services/NotificationService';
 import { calendarService } from '@/services/CalendarService';
+import { gmailService } from '@/services/GmailService';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+
+WebBrowser.maybeCompleteAuthSession();
+
+// Replace with your Google Cloud Console iOS client ID (bundle ID: com.aurisai.app)
+const GOOGLE_IOS_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '';
 
 const TODOS_KEY = '@auris:todos';
 const EVENTS_KEY = '@auris:events';
@@ -281,7 +289,7 @@ export default function HomeScreen() {
         personality: profile.personality,
         userName: profile.name || undefined,
         userProfession: profile.profession || undefined,
-        contextData: calendarContextRef.current,
+        contextData: calendarContextRef.current ?? emailContextRef.current,
       });
 
       const transcript = String(result.transcript ?? '');
@@ -342,6 +350,30 @@ export default function HomeScreen() {
   }, [profile, mode, appendTodos, appendEvents, capturedImageBase64, addStreamingMessage]);
 
   const calendarContextRef = useRef<string | undefined>(undefined);
+  const emailContextRef = useRef<string | undefined>(undefined);
+
+  const [googleRequest, googleResponse, googlePromptAsync] = Google.useAuthRequest({
+    iosClientId: GOOGLE_IOS_CLIENT_ID,
+    scopes: ['https://www.googleapis.com/auth/gmail.readonly'],
+  });
+
+  useEffect(() => {
+    gmailService.loadToken().catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (googleResponse?.type === 'success') {
+      const token = googleResponse.authentication?.accessToken;
+      const expiresIn = googleResponse.authentication?.expiresIn ?? 3600;
+      if (token) {
+        gmailService.saveToken(token, expiresIn).then(() => {
+          addStreamingMessage('Gmail connected. Email Intel is active — tap the orb to analyze your inbox.');
+        }).catch(() => {});
+      }
+    } else if (googleResponse?.type === 'error') {
+      setError('Gmail authentication failed. Please try again.');
+    }
+  }, [googleResponse]);
 
   const handleOrbLongPress = useCallback(async () => {
     if (mode === 'social') return;
@@ -360,9 +392,9 @@ export default function HomeScreen() {
     if (isProcessingRef.current || mode === 'social') return;
     setError(null);
 
-    if (activeModule === 'email') {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
-      setError('Email Intel requires Gmail connection — setup coming soon.');
+    if (activeModule === 'email' && !gmailService.isAuthenticated()) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      googlePromptAsync();
       return;
     }
 
@@ -374,8 +406,18 @@ export default function HomeScreen() {
 
     if (activeModule === 'calendar') {
       calendarContextRef.current = await calendarService.getUpcomingEventsContext() ?? undefined;
+      emailContextRef.current = undefined;
+    } else if (activeModule === 'email') {
+      emailContextRef.current = await gmailService.getEmailContext().catch(async (err: Error) => {
+        if (err.message === 'GMAIL_TOKEN_EXPIRED') {
+          googlePromptAsync();
+        }
+        return undefined;
+      });
+      calendarContextRef.current = undefined;
     } else {
       calendarContextRef.current = undefined;
+      emailContextRef.current = undefined;
     }
 
     try {
@@ -402,7 +444,11 @@ export default function HomeScreen() {
     } else if (moduleId === 'visual') {
       addStreamingMessage('Visual analysis module activated. Capture an image then tap the orb to analyze.');
     } else if (moduleId === 'email') {
-      addStreamingMessage('Email Intel selected. Gmail connection required — setup coming soon.');
+      if (gmailService.isAuthenticated()) {
+        addStreamingMessage('Email Intel activated. Tap the orb to analyze your inbox.');
+      } else {
+        addStreamingMessage('Email Intel selected. Tap the orb to connect Gmail and start analyzing your inbox.');
+      }
     }
   }, [addStreamingMessage]);
 
@@ -485,7 +531,9 @@ export default function HomeScreen() {
       {/* Orb hint */}
       <View style={styles.hintRow}>
         {orbState === 'idle' && activeModule === 'email' && (
-          <Text style={[styles.hint, { color: '#6366F1' }]}>gmail setup required</Text>
+          <Text style={[styles.hint, { color: '#6366F1' }]}>
+            {gmailService.isAuthenticated() ? 'tap to analyze inbox' : 'tap to connect gmail'}
+          </Text>
         )}
         {orbState === 'idle' && activeModule === 'calendar' && (
           <Text style={[styles.hint, { color: '#10B981' }]}>

@@ -24,6 +24,7 @@ import { profileService, UserProfile } from '@/services/ProfileService';
 import { historyService } from '@/services/HistoryService';
 import { socialModeService } from '@/services/SocialModeService';
 import { notificationService } from '@/services/NotificationService';
+import { identityService } from '@/services/IdentityService';
 import { calendarService } from '@/services/CalendarService';
 import { gmailService } from '@/services/GmailService';
 import { Ionicons } from '@expo/vector-icons';
@@ -54,6 +55,7 @@ export default function HomeScreen() {
   const scrollRef = useRef<ScrollView>(null);
   const isProcessingRef = useRef(false);
   const isCapturingRef = useRef(false);
+  const userIdRef = useRef<string>('user-local');
 
   const [contextualSheetVisible, setContextualSheetVisible] = useState(false);
   const [activeModule, setActiveModule] = useState<string>('visual');
@@ -158,6 +160,10 @@ export default function HomeScreen() {
   }, [capturedImageBase64, orbState]);
 
   useEffect(() => {
+    identityService.getUserId().then((id) => { userIdRef.current = id; });
+  }, []);
+
+  useEffect(() => {
     backendService.loadConfig();
     audioService.requestPermissions();
     notificationService.setup().catch(() => {});
@@ -230,7 +236,7 @@ export default function HomeScreen() {
       }).catch(() => {});
     });
     socialModeService.start(
-      'user-local',
+      userIdRef.current,
       profile.personality,
       profile.name || undefined,
       profile.profession || undefined,
@@ -285,7 +291,7 @@ export default function HomeScreen() {
       const result = await backendService.processMultiModal({
         audioUri: uri,
         imageBase64: imageSnapshot ?? undefined,
-        userId: 'user-local',
+        userId: userIdRef.current,
         personality: profile.personality,
         userName: profile.name || undefined,
         userProfession: profile.profession || undefined,

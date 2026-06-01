@@ -352,6 +352,8 @@ export default function HomeScreen() {
   const calendarContextRef = useRef<string | undefined>(undefined);
   const emailContextRef = useRef<string | undefined>(undefined);
 
+  const isGoogleAuthPendingRef = useRef(false);
+
   const [googleRequest, googleResponse, googlePromptAsync] = Google.useAuthRequest({
     iosClientId: GOOGLE_IOS_CLIENT_ID,
     scopes: ['https://www.googleapis.com/auth/gmail.readonly'],
@@ -362,6 +364,9 @@ export default function HomeScreen() {
   }, []);
 
   useEffect(() => {
+    if (googleResponse?.type === 'success' || googleResponse?.type === 'error' || googleResponse?.type === 'dismiss') {
+      isGoogleAuthPendingRef.current = false;
+    }
     if (googleResponse?.type === 'success') {
       const token = googleResponse.authentication?.accessToken;
       const expiresIn = googleResponse.authentication?.expiresIn ?? 3600;
@@ -394,7 +399,10 @@ export default function HomeScreen() {
 
     if (activeModule === 'email' && !gmailService.isAuthenticated()) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-      googlePromptAsync();
+      if (!isGoogleAuthPendingRef.current) {
+        isGoogleAuthPendingRef.current = true;
+        googlePromptAsync();
+      }
       return;
     }
 
@@ -408,12 +416,20 @@ export default function HomeScreen() {
       calendarContextRef.current = await calendarService.getUpcomingEventsContext() ?? undefined;
       emailContextRef.current = undefined;
     } else if (activeModule === 'email') {
-      emailContextRef.current = await gmailService.getEmailContext().catch(async (err: Error) => {
+      try {
+        emailContextRef.current = await gmailService.getEmailContext();
+      } catch (err: any) {
         if (err.message === 'GMAIL_TOKEN_EXPIRED') {
-          googlePromptAsync();
+          if (!isGoogleAuthPendingRef.current) {
+            isGoogleAuthPendingRef.current = true;
+            googlePromptAsync();
+          }
+          return;
         }
-        return undefined;
-      });
+        setError(`Gmail fetch failed: ${err.message ?? 'unknown error'}`);
+        emailContextRef.current = undefined;
+        return;
+      }
       calendarContextRef.current = undefined;
     } else {
       calendarContextRef.current = undefined;
@@ -456,10 +472,12 @@ export default function HomeScreen() {
     if (mode === 'social') {
       await socialModeService.stop();
       setMode('solo');
+      addStreamingMessage('Solo mode active. I\'m ready to talk whenever you are.');
       return;
     }
     if (audioService.isRecording()) return;
     setMode('social');
+    addStreamingMessage('Social mode active. My senses are fully open — passively listening to everything around you. I\'ll capture important moments and notify you. If you speak to me directly, I\'ll pay attention to that too.');
   };
 
   const modeColor = mode === 'solo' ? theme.colors.gold : '#4A9EFF';
@@ -650,8 +668,8 @@ const styles = StyleSheet.create({
     borderWidth: 0.5, borderColor: '#FF6B6B40', width: '90%',
   },
   errorText: { flex: 1, color: '#FF6B6B', fontSize: 12, lineHeight: 16 },
-  transcript: { width: '100%', maxHeight: 200, marginTop: 16 },
-  transcriptContent: { paddingHorizontal: 20, gap: 8, paddingBottom: 4 },
+  transcript: { width: '100%', maxHeight: '45%', marginTop: 16 },
+  transcriptContent: { paddingHorizontal: 20, gap: 8, paddingBottom: 220 },
   bubble: { maxWidth: '78%', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 16 },
   bubbleUser: {
     alignSelf: 'flex-end', backgroundColor: theme.colors.surfaceElevated,
@@ -672,8 +690,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#88888815', borderRadius: 8, borderWidth: 0.5, borderColor: '#88888830',
   },
   audioUnavailableText: { color: '#888', fontSize: 10, letterSpacing: 0.5 },
-  hintRow: { alignItems: 'center', paddingBottom: 10 },
-  hint: { color: theme.colors.textTertiary, fontSize: 11, letterSpacing: 1 },
+  hintRow: { alignItems: 'center', paddingBottom: 10, minHeight: 20 },
+  hint: { color: theme.colors.textSecondary, fontSize: 12, letterSpacing: 1.2, fontWeight: '500' },
   // Camera button
   cameraSection: {
     alignItems: 'center',

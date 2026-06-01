@@ -6,6 +6,7 @@ import Animated, {
   withRepeat,
   withTiming,
   withSequence,
+  withSpring,
   Easing,
   cancelAnimation,
 } from 'react-native-reanimated';
@@ -64,10 +65,11 @@ export function AurisOrb({ state, onPress, onLongPress }: Props) {
     cancelAnimation(rotation);
 
     if (state === 'idle') {
+      // Gentle heartbeat: 0.99 → 1.01 → 0.99, 3s cycle
       coreScale.value = withRepeat(
         withSequence(
-          withTiming(1.04, { duration: 2400, easing: Easing.inOut(Easing.sin) }),
-          withTiming(0.97, { duration: 2400, easing: Easing.inOut(Easing.sin) }),
+          withTiming(1.01, { duration: 1500, easing: Easing.inOut(Easing.sin) }),
+          withTiming(0.99, { duration: 1500, easing: Easing.inOut(Easing.sin) }),
         ),
         -1,
         false,
@@ -94,15 +96,16 @@ export function AurisOrb({ state, onPress, onLongPress }: Props) {
     }
 
     if (state === 'listening') {
+      // More dramatic breath: 0.92 → 1.08, 1.2s cycle
       coreScale.value = withRepeat(
         withSequence(
-          withTiming(1.09, { duration: 500, easing: Easing.out(Easing.ease) }),
-          withTiming(0.95, { duration: 500, easing: Easing.in(Easing.ease) }),
+          withTiming(1.08, { duration: 600, easing: Easing.out(Easing.ease) }),
+          withTiming(0.92, { duration: 600, easing: Easing.in(Easing.ease) }),
         ),
         -1,
         false,
       );
-      glowOpacity.value = withTiming(0.85, { duration: 300 });
+      glowOpacity.value = withSpring(0.85, { damping: 12, stiffness: 80 });
 
       ring1Scale.value = withRepeat(
         withSequence(
@@ -156,8 +159,9 @@ export function AurisOrb({ state, onPress, onLongPress }: Props) {
         -1,
         false,
       );
+      // 20% faster rotation: 1400 → 1167ms per revolution
       rotation.value = withRepeat(
-        withTiming(360, { duration: 1400, easing: Easing.linear }),
+        withTiming(360, { duration: 1167, easing: Easing.linear }),
         -1,
         false,
       );
@@ -232,7 +236,7 @@ export function AurisOrb({ state, onPress, onLongPress }: Props) {
         -1,
         false,
       );
-      glowOpacity.value = withTiming(1, { duration: 200 });
+      glowOpacity.value = withSpring(1, { damping: 10, stiffness: 80 });
 
       ring1Scale.value = withRepeat(
         withSequence(

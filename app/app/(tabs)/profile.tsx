@@ -4,7 +4,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
 import { PERSONALITIES, PersonalityId, PersonalityMode } from '@/constants/personalities';
-import { backendService } from '@/services/BackendService';
 import { profileService } from '@/services/ProfileService';
 
 function PersonalityCard({
@@ -29,8 +28,8 @@ function PersonalityCard({
           <Ionicons name={personality.icon as any} size={18} color={personality.color} />
         </View>
         <View style={{ gap: 2 }}>
-          <Text style={styles.personalityName}>{personality.nameTR}</Text>
-          <Text style={styles.personalityDesc}>{personality.descriptionTR}</Text>
+          <Text style={styles.personalityName}>{personality.name}</Text>
+          <Text style={styles.personalityDesc}>{personality.description}</Text>
         </View>
       </View>
       {selected && (
@@ -45,27 +44,18 @@ export default function ProfileScreen() {
   const [name, setName] = useState('');
   const [profession, setProfession] = useState('');
   const [personality, setPersonality] = useState<PersonalityId>('companion');
-  const [backendUrl, setBackendUrl] = useState('');
-
   useEffect(() => {
-    Promise.all([
-      backendService.loadConfig(),
-      profileService.load(),
-    ]).then(([, profile]) => {
+    profileService.load().then((profile) => {
       setName(profile.name);
       setProfession(profile.profession);
       setPersonality(profile.personality as PersonalityId);
-      setBackendUrl(backendService.getBackendUrl());
     });
   }, []);
 
   const selectedPersonality = PERSONALITIES.find((p) => p.id === personality)!;
 
   const handleSave = async () => {
-    await Promise.all([
-      profileService.save({ name, profession, personality }),
-      backendUrl.trim() ? backendService.saveBackendUrl(backendUrl.trim()) : Promise.resolve(),
-    ]);
+    await profileService.save({ name, profession, personality });
     Alert.alert('Saved', 'Profile updated.');
   };
 
@@ -112,26 +102,6 @@ export default function ProfileScreen() {
             returnKeyType="done"
           />
         </View>
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionLabel}>BACKEND</Text>
-        <View style={styles.inputGroup}>
-          <TextInput
-            style={styles.fieldInput}
-            value={backendUrl}
-            onChangeText={setBackendUrl}
-            placeholder="https://auris-backend.aurisapi.workers.dev"
-            placeholderTextColor={theme.colors.textTertiary}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="url"
-            returnKeyType="done"
-          />
-        </View>
-        <Text style={styles.sectionSub}>
-          Cloudflare Workers URL. Set up backend first, then paste URL here.
-        </Text>
       </View>
 
       <View style={styles.section}>

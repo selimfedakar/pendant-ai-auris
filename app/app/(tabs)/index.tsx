@@ -1,12 +1,14 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, Modal, Pressable, AppState } from 'react-native';
+import { View, Text, StyleSheet, Modal, Pressable, AppState, Image, Linking, TouchableOpacity } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
+  useAnimatedScrollHandler,
   withTiming,
   withRepeat,
   withSequence,
+  withSpring,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -45,6 +47,21 @@ type ScheduledEvent = { id: string; title: string; datetime: string; participant
 type Message = { id: string; role: 'user' | 'auris'; text: string };
 type Mode = 'solo' | 'social';
 
+// ─── Animated message bubble ───────────────────────────────────────────────
+function AnimatedBubble({ children, index }: { children: React.ReactNode; index: number }) {
+  const opacity = useSharedValue(0);
+  const translateY = useSharedValue(12);
+  useEffect(() => {
+    opacity.value = withTiming(1, { duration: 280 });
+    translateY.value = withSpring(0, { damping: 18, stiffness: 120 });
+  }, []);
+  const style = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+    transform: [{ translateY: translateY.value }],
+  }));
+  return <Animated.View style={style}>{children}</Animated.View>;
+}
+
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const [orbState, setOrbState] = useState<OrbState>('idle');
@@ -52,7 +69,7 @@ export default function HomeScreen() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [profile, setProfile] = useState<UserProfile>({ name: '', profession: '', personality: 'companion' });
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<Animated.ScrollView>(null);
   const isProcessingRef = useRef(false);
   const isCapturingRef = useRef(false);
   const userIdRef = useRef<string>('user-local');
@@ -76,7 +93,26 @@ export default function HomeScreen() {
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [showCamera, setShowCamera] = useState(false);
   const [capturedImageBase64, setCapturedImageBase64] = useState<string | null>(null);
+  const [cameraPermissionDenied, setCameraPermissionDenied] = useState(false);
   const cameraRef = useRef<CameraView>(null);
+
+  // Flash overlay animation (camera capture)
+  const flashOpacity = useSharedValue(0);
+  const flashStyle = useAnimatedStyle(() => ({ opacity: flashOpacity.value }));
+
+  // Thumbnail preview card animation
+  const thumbnailScale = useSharedValue(0);
+  const thumbnailStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: thumbnailScale.value }],
+  }));
+
+  // Message list scroll Y tracker
+  const scrollY = useSharedValue(0);
+  const onScroll = useAnimatedScrollHandler({
+    onScroll: (e) => {
+      scrollY.value = e.contentOffset.y;
+    },
+  });
 
   // Animated backdrop for vision panel
   const backdropOpacity = useSharedValue(0);
@@ -87,6 +123,15 @@ export default function HomeScreen() {
   useEffect(() => {
     backdropOpacity.value = withTiming(visionPanel.visible ? 1 : 0, { duration: 220 });
   }, [visionPanel.visible]);
+
+  // Thumbnail spring in/out when capturedImageBase64 changes
+  useEffect(() => {
+    if (capturedImageBase64) {
+      thumbnailScale.value = withSpring(1, { damping: 14, stiffness: 120 });
+    } else {
+      thumbnailScale.value = withTiming(0, { duration: 150 });
+    }
+  }, [capturedImageBase64]);
 
   const addMessage = (role: 'user' | 'auris', text: string) => {
     setMessages((prev) => [...prev, { id: `${Date.now()}-${role}`, role, text }]);
@@ -247,7 +292,11 @@ export default function HomeScreen() {
   const handleCameraPress = useCallback(async () => {
     if (!cameraPermission?.granted) {
       const result = await requestCameraPermission();
-      if (!result.granted) return;
+      if (!result.granted) {
+        setCameraPermissionDenied(true);
+        setShowCamera(true);
+        return;
+      }
     }
     setShowCamera(true);
   }, [cameraPermission, requestCameraPermission]);
@@ -256,8 +305,17 @@ export default function HomeScreen() {
     if (!cameraRef.current || isCapturingRef.current) return;
     isCapturingRef.current = true;
     try {
-      const photo = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.5 });
-      if (photo?.base64) setCapturedImageBase64(photo.base64);
+      // Flash overlay
+      flashOpacity.value = withSequence(
+        withTiming(1, { duration: 60 }),
+        withTiming(0, { duration: 220 }),
+      );
+      const photo = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.4, skipMetadata: true });
+      if (!photo?.base64) {
+        addMessage('auris', 'Image processing failed. Please capture again.');
+        return;
+      }
+      setCapturedImageBase64(photo.base64);
     } catch {
       // non-fatal
     } finally {
@@ -515,23 +573,26 @@ export default function HomeScreen() {
 
       {/* Transcript scroll */}
       {messages.length > 0 && (
-        <ScrollView
+        <Animated.ScrollView
           ref={scrollRef}
           style={styles.transcript}
           contentContainerStyle={styles.transcriptContent}
           showsVerticalScrollIndicator={false}
+          onScroll={onScroll}
+          scrollEventThrottle={16}
         >
-          {messages.map((msg) => (
-            <View
-              key={msg.id}
-              style={[styles.bubble, msg.role === 'user' ? styles.bubbleUser : styles.bubbleAuris]}
-            >
-              <Text style={[styles.bubbleText, msg.role === 'auris' && styles.bubbleTextAuris]}>
-                {msg.text ?? ''}
-              </Text>
-            </View>
+          {messages.map((msg, i) => (
+            <AnimatedBubble key={msg.id} index={i}>
+              <View
+                style={[styles.bubble, msg.role === 'user' ? styles.bubbleUser : styles.bubbleAuris]}
+              >
+                <Text style={[styles.bubbleText, msg.role === 'auris' && styles.bubbleTextAuris]}>
+                  {msg.text ?? ''}
+                </Text>
+              </View>
+            </AnimatedBubble>
           ))}
-        </ScrollView>
+        </Animated.ScrollView>
       )}
 
       {/* Orb */}
@@ -596,6 +657,19 @@ export default function HomeScreen() {
         </Text>
       </View>
 
+      {/* Thumbnail preview card */}
+      {capturedImageBase64 && (
+        <Animated.View style={[styles.thumbnailCard, thumbnailStyle]}>
+          <Image
+            source={{ uri: 'data:image/jpeg;base64,' + capturedImageBase64 }}
+            style={styles.thumbnailImage}
+          />
+          <Pressable style={styles.thumbnailDismiss} onPress={handleDismissImage}>
+            <Ionicons name="close" size={10} color="#000" />
+          </Pressable>
+        </Animated.View>
+      )}
+
       {/* Floating pendant canvas */}
       <FloatingCanvas
         onVisionPress={handleVisionPress}
@@ -639,13 +713,33 @@ export default function HomeScreen() {
       {/* Camera modal */}
       <Modal visible={showCamera} animationType="fade" statusBarTranslucent>
         <View style={styles.cameraModal}>
-          <CameraView ref={cameraRef} style={styles.cameraView} facing="back" />
-          <Pressable style={styles.cameraClose} onPress={() => setShowCamera(false)}>
+          {cameraPermissionDenied ? (
+            <View style={styles.permissionDeniedContainer}>
+              <Ionicons name="lock-closed" size={48} color="#FFD700" />
+              <Text style={styles.permissionDeniedText}>Auris Eye requires camera access</Text>
+              <TouchableOpacity
+                style={styles.permissionDeniedButton}
+                onPress={() => Linking.openSettings()}
+              >
+                <Text style={styles.permissionDeniedButtonText}>Open Settings</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <CameraView ref={cameraRef} style={styles.cameraView} facing="back" />
+          )}
+          {/* Flash overlay */}
+          <Animated.View
+            pointerEvents="none"
+            style={[StyleSheet.absoluteFill, styles.flashOverlay, flashStyle]}
+          />
+          <Pressable style={styles.cameraClose} onPress={() => { setShowCamera(false); setCameraPermissionDenied(false); }}>
             <Ionicons name="close" size={28} color="#fff" />
           </Pressable>
-          <Pressable style={styles.captureButton} onPress={handleTakePicture}>
-            <View style={styles.captureButtonInner} />
-          </Pressable>
+          {!cameraPermissionDenied && (
+            <Pressable style={styles.captureButton} onPress={handleTakePicture}>
+              <View style={styles.captureButtonInner} />
+            </Pressable>
+          )}
         </View>
       </Modal>
     </View>
@@ -740,6 +834,37 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: theme.colors.background,
   },
+  // Thumbnail preview card
+  thumbnailCard: {
+    position: 'absolute',
+    bottom: 180,
+    right: 20,
+    width: 72,
+    height: 72,
+    zIndex: 50,
+  },
+  thumbnailImage: {
+    width: 72,
+    height: 72,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#FFD700',
+    shadowColor: '#FFD700',
+    shadowRadius: 8,
+    shadowOpacity: 0.8,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  thumbnailDismiss: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#FFD700',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   // Vision panel backdrop
   visionBackdrop: {
     backgroundColor: 'rgba(0,0,0,0.52)',
@@ -747,6 +872,10 @@ const styles = StyleSheet.create({
   // Camera modal
   cameraModal: { flex: 1, backgroundColor: '#000' },
   cameraView: { flex: 1 },
+  flashOverlay: {
+    backgroundColor: '#fff',
+    zIndex: 999,
+  },
   cameraClose: {
     position: 'absolute', top: 56, right: 24,
     width: 40, height: 40, alignItems: 'center', justifyContent: 'center',
@@ -758,4 +887,29 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   captureButtonInner: { width: 56, height: 56, borderRadius: 28, backgroundColor: '#fff' },
+  // Permission denied
+  permissionDeniedContainer: {
+    flex: 1,
+    backgroundColor: '#000',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+    gap: 20,
+  },
+  permissionDeniedText: {
+    color: '#fff',
+    fontSize: 16,
+    textAlign: 'center',
+  },
+  permissionDeniedButton: {
+    backgroundColor: '#FFD700',
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    borderRadius: 8,
+  },
+  permissionDeniedButtonText: {
+    color: '#000',
+    fontWeight: '700',
+    fontSize: 15,
+  },
 });

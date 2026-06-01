@@ -13,6 +13,8 @@ import { theme } from '@/constants/theme';
 
 const CYAN = '#00D4FF';
 const GOLD = theme.colors.gold;
+const CRIMSON = '#C0392B';
+const CRIMSON_BRIGHT = '#E74C3C';
 
 interface FloatingCanvasProps {
   onVisionPress: () => void;
@@ -221,7 +223,7 @@ const styles = StyleSheet.create({
   sideLabel: {
     fontSize: 7,
     fontWeight: '600',
-    color: `${GOLD}70`,
+    color: `${CRIMSON_BRIGHT}CC`,
     letterSpacing: 1.1,
     textAlign: 'center',
     lineHeight: 10,
@@ -232,8 +234,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 28,
-    backgroundColor: `${GOLD}08`,
-    shadowColor: GOLD,
+    backgroundColor: `${CRIMSON}12`,
+    shadowColor: CRIMSON_BRIGHT,
     shadowOffset: { width: 0, height: 0 },
     shadowRadius: 22,
     shadowOpacity: 0.85,
@@ -241,15 +243,15 @@ const styles = StyleSheet.create({
   },
   sideNodeAura: {
     borderRadius: 28,
-    backgroundColor: `${GOLD}25`,
+    backgroundColor: `${CRIMSON}30`,
   },
   sideNodeDiamond: {
     width: 32,
     height: 32,
     borderRadius: 5,
     borderWidth: 1.5,
-    borderColor: `${GOLD}CC`,
-    backgroundColor: `${GOLD}30`,
+    borderColor: `${CRIMSON_BRIGHT}CC`,
+    backgroundColor: `${CRIMSON}35`,
     transform: [{ rotate: '45deg' }],
     alignItems: 'center',
     justifyContent: 'center',
@@ -258,7 +260,7 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 2,
-    backgroundColor: GOLD,
+    backgroundColor: CRIMSON_BRIGHT,
     transform: [{ rotate: '-45deg' }],
   },
   // --- Center node ---

@@ -18,7 +18,7 @@ app.use(
   cors({
     origin: "*",
     allowMethods: ["GET", "POST", "OPTIONS"],
-    allowHeaders: ["Content-Type", "Authorization", "X-Auris-Key"],
+    allowHeaders: ["Content-Type", "Authorization", "X-Auris-Key", "X-User-Id", "X-Personality", "X-User-Name"],
   })
 );
 
@@ -542,6 +542,116 @@ app.post("/v1/summarize", async (c) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("summarize error:", message);
+    return c.json({ error: message }, 500);
+  }
+});
+
+// Device code validation — checks whether a code from the product booklet is valid.
+// Admin code (003) is hardcoded server-side. Customer codes (AUR-XXXXXX) are
+// stored in the CONVERSATIONS KV under the "code:" prefix.
+app.post("/v1/validate-code", async (c) => {
+  let body: { code?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+
+  const code = (body.code ?? "").trim().toUpperCase();
+
+  if (!code) {
+    return c.json({ valid: false }, 400);
+  }
+
+  // Admin code — hardcoded, no KV lookup needed.
+  if (code === "003") {
+    return c.json({ valid: true, type: "admin" });
+  }
+
+  // Customer code format: AUR- followed by exactly 6 uppercase alphanumerics.
+  const customerCodeRegex = /^AUR-[A-Z0-9]{6}$/;
+  if (customerCodeRegex.test(code)) {
+    const kvKey = `code:${code}`;
+    const existing = await c.env.CONVERSATIONS.get(kvKey);
+    if (!existing) {
+      return c.json({ valid: false });
+    }
+
+    // Record activation (upsert — overwrites previous value with updated activatedAt).
+    await c.env.CONVERSATIONS.put(
+      kvKey,
+      JSON.stringify({ activatedAt: new Date().toISOString(), activations: 1 }),
+    );
+
+    return c.json({ valid: true, type: "customer" });
+  }
+
+  // Unknown format.
+  return c.json({ valid: false });
+});
+
+// Raw binary endpoint — ESP32 sends WAV bytes directly (no base64, no JSON wrapper).
+// Headers carry auth + metadata; body is the raw WAV file.
+app.post("/v1/process-audio-raw", async (c) => {
+  const userId = c.req.header("X-User-Id") ?? "anonymous";
+  const personality = (c.req.header("X-Personality") ?? "companion").toLowerCase();
+  const userName = c.req.header("X-User-Name") ?? "";
+
+  const rawBody = await c.req.arrayBuffer();
+  if (!rawBody || rawBody.byteLength === 0) {
+    return c.json({ error: "Empty audio body" }, 400);
+  }
+
+  try {
+    const audioBlob = new Blob([rawBody], { type: "audio/wav" });
+
+    const [transcript, history] = await Promise.all([
+      transcribeAudio(audioBlob, c.env.GROQ_API_KEY),
+      loadHistory(c.env.CONVERSATIONS, userId),
+    ]);
+
+    if (!transcript) return c.json({ error: "No speech detected in audio" }, 422);
+
+    const { reply, todos, events } = await generateReply(
+      transcript,
+      history,
+      personality,
+      userName,
+      "",
+      c.env.ANTHROPIC_API_KEY,
+    );
+
+    await saveHistory(c.env.CONVERSATIONS, userId, [
+      ...history,
+      { role: "user", content: transcript },
+      { role: "assistant", content: reply },
+    ]);
+
+    let audioBuffer: ArrayBuffer = new ArrayBuffer(0);
+    let ttsSkipped = false;
+    try {
+      audioBuffer = await synthesizeSpeech(reply, c.env.OPENAI_API_KEY);
+    } catch (ttsErr) {
+      console.error("TTS failed (non-fatal):", ttsErr instanceof Error ? ttsErr.message : ttsErr);
+      ttsSkipped = true;
+    }
+
+    return new Response(audioBuffer, {
+      status: 200,
+      headers: {
+        "Content-Type": "audio/mpeg",
+        "X-Transcript": encodeURIComponent(transcript),
+        "X-Reply": encodeURIComponent(reply),
+        "X-User-Id": userId,
+        "X-Personality": personality,
+        ...(ttsSkipped && { "X-TTS-Skipped": "1" }),
+        ...(todos.length > 0 && { "X-Todos": encodeURIComponent(JSON.stringify(todos)) }),
+        ...(events.length > 0 && { "X-Events": encodeURIComponent(JSON.stringify(events)) }),
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("process-audio-raw error:", message);
     return c.json({ error: message }, 500);
   }
 });

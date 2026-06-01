@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { View, Text, StyleSheet, Pressable, Modal, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Modal, ScrollView, SectionList } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedScrollHandler,
@@ -13,6 +13,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
 import { historyService, HistoryEntry } from '@/services/HistoryService';
+
+const AnimatedSectionList = Animated.createAnimatedComponent(SectionList);
 
 type Section = { title: string; data: HistoryEntry[] };
 
@@ -203,7 +205,7 @@ export default function HistoryScreen() {
         )}
       </View>
 
-      <Animated.SectionList
+      <AnimatedSectionList
         onScroll={scrollHandler}
         scrollEventThrottle={16}
         sections={sections}

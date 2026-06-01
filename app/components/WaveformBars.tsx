@@ -3,8 +3,10 @@ import { View, StyleSheet } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
+  withSpring,
   withTiming,
   Easing,
+  interpolateColor,
 } from 'react-native-reanimated';
 import { audioService } from '@/services/AudioService';
 
@@ -14,25 +16,42 @@ const BAR_COUNT = BAR_MULTIPLIERS.length;
 
 const MIN_HEIGHT = 3;
 const MAX_HEIGHT = 64;
-const ANIMATE_DURATION = 70;
 const BAR_WIDTH = 5;
 const BAR_GAP = 5;
+
+// Color interpolation anchors: low volume = gold, high volume = cyan
+const COLOR_LOW = '#F5A623';  // gold
+const COLOR_HIGH = '#00D4FF'; // cyan
 
 interface Props {
   active: boolean;
   color: string;
 }
 
-function SingleBar({ height, color }: { height: Animated.SharedValue<number>; color: string }) {
-  const animatedStyle = useAnimatedStyle(() => ({
-    height: height.value ?? MIN_HEIGHT,
-  }));
+function SingleBar({
+  height,
+  colorProgress,
+}: {
+  height: Animated.SharedValue<number>;
+  colorProgress: Animated.SharedValue<number>;
+}) {
+  const animatedStyle = useAnimatedStyle(() => {
+    const barColor = interpolateColor(
+      colorProgress.value,
+      [0, 1],
+      [COLOR_LOW, COLOR_HIGH],
+    );
+    return {
+      height: height.value ?? MIN_HEIGHT,
+      backgroundColor: barColor,
+      shadowColor: barColor,
+    };
+  });
 
   return (
     <Animated.View
       style={[
         styles.bar,
-        { backgroundColor: color, shadowColor: color },
         animatedStyle,
       ]}
     />
@@ -51,6 +70,9 @@ export function WaveformBars({ active, color }: Props) {
     useSharedValue(MIN_HEIGHT),
   ];
 
+  // Single shared color progress value (0 = gold, 1 = cyan) driven by avg metering
+  const colorProgress = useSharedValue(0);
+
   useEffect(() => {
     if (active) {
       audioService.setMeteringCallback((db: number) => {
@@ -58,11 +80,16 @@ export function WaveformBars({ active, color }: Props) {
         const normalized = Math.max(0, Math.min(1, (db + 60) / 60));
         for (let i = 0; i < BAR_COUNT; i++) {
           const targetHeight = MIN_HEIGHT + normalized * (MAX_HEIGHT - MIN_HEIGHT) * BAR_MULTIPLIERS[i];
-          barHeights[i].value = withTiming(targetHeight, {
-            duration: ANIMATE_DURATION,
-            easing: Easing.out(Easing.sin),
+          barHeights[i].value = withSpring(targetHeight, {
+            damping: 15,
+            stiffness: 200,
           });
         }
+        // Drive color: normalized maps 0 → gold, 1 → cyan
+        colorProgress.value = withSpring(normalized, {
+          damping: 15,
+          stiffness: 200,
+        });
       });
     } else {
       // Clear callback and animate all bars back to minimum
@@ -73,6 +100,7 @@ export function WaveformBars({ active, color }: Props) {
           easing: Easing.out(Easing.sin),
         });
       }
+      colorProgress.value = withTiming(0, { duration: 200 });
     }
 
     return () => {
@@ -84,7 +112,7 @@ export function WaveformBars({ active, color }: Props) {
   return (
     <View style={styles.container}>
       {barHeights.map((height, index) => (
-        <SingleBar key={index} height={height} color={color} />
+        <SingleBar key={index} height={height} colorProgress={colorProgress} />
       ))}
     </View>
   );

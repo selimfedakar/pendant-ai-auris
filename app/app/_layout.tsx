@@ -1,8 +1,8 @@
-import { Stack, router } from 'expo-router';
+import { Stack, router, useRootNavigationState } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import * as SplashScreen from 'expo-splash-screen';
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text } from 'react-native';
 import { deviceCodeService } from '../services/DeviceCodeService';
 
@@ -33,16 +33,25 @@ class ErrorBoundary extends React.Component<
 }
 
 export default function RootLayout() {
-  // Gate access — check device code before revealing any screen.
-  // SplashScreen stays up until the async check finishes so the user never glimpses tabs.
+  const navState = useRootNavigationState();
+  const [codeStatus, setCodeStatus] = useState<'pending' | 'found' | 'missing'>('pending');
+
+  // Async check runs once on mount — result stored in state
   useEffect(() => {
     deviceCodeService.getCode().then((code) => {
-      if (!code) {
-        router.replace('/activate');
-      }
-      SplashScreen.hideAsync();
+      setCodeStatus(code ? 'found' : 'missing');
     });
   }, []);
+
+  // Navigate only when BOTH the async check is done AND the navigator is ready.
+  // router.replace called before navState.key is set is a silent no-op in Expo Router.
+  useEffect(() => {
+    if (!navState?.key || codeStatus === 'pending') return;
+    if (codeStatus === 'missing') {
+      router.replace('/activate');
+    }
+    SplashScreen.hideAsync();
+  }, [navState?.key, codeStatus]);
 
   return (
     <ErrorBoundary>

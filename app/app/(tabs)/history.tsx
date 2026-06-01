@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { View, Text, StyleSheet, SectionList, Pressable } from 'react-native';
+import { View, Text, StyleSheet, SectionList, Pressable, Modal, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
@@ -21,6 +21,12 @@ function formatSectionDate(ts: number): string {
 function formatTime(ts: number): string {
   const d = new Date(ts);
   return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+}
+
+function formatDate(ts: number): string {
+  const d = new Date(ts);
+  return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) +
+    ' · ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 }
 
 function estimateDuration(text: string): string {
@@ -50,13 +56,13 @@ function SectionHeader({ title, count }: { title: string; count: number }) {
   );
 }
 
-function HistoryCard({ item }: { item: HistoryEntry }) {
+function HistoryCard({ item, onPress }: { item: HistoryEntry; onPress: () => void }) {
   const modeColor = item.mode === 'solo' ? theme.colors.gold : '#4A9EFF';
   const modeLabel = item.mode === 'solo' ? 'SOLO' : 'SOCIAL';
   const modeIcon = item.mode === 'solo' ? 'mic-outline' : 'people-outline';
 
   return (
-    <Pressable style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}>
+    <Pressable style={({ pressed }) => [styles.card, pressed && styles.cardPressed]} onPress={onPress}>
       <View style={styles.cardHeader}>
         <View style={[styles.modeBadge, { borderColor: `${modeColor}40`, backgroundColor: `${modeColor}08` }]}>
           <Ionicons name={modeIcon} size={9} color={modeColor} />
@@ -74,6 +80,7 @@ function HistoryCard({ item }: { item: HistoryEntry }) {
 export default function HistoryScreen() {
   const insets = useSafeAreaInsets();
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [selectedItem, setSelectedItem] = useState<HistoryEntry | null>(null);
 
   useEffect(() => {
     historyService.load().then(setHistory);
@@ -95,7 +102,7 @@ export default function HistoryScreen() {
       <SectionList
         sections={sections}
         keyExtractor={(item) => item.id}
-        renderItem={({ item }) => <HistoryCard item={item} />}
+        renderItem={({ item }) => <HistoryCard item={item} onPress={() => setSelectedItem(item)} />}
         renderSectionHeader={({ section }) => (
           <SectionHeader title={section.title} count={section.data.length} />
         )}
@@ -111,6 +118,26 @@ export default function HistoryScreen() {
           </View>
         }
       />
+
+      <Modal
+        visible={!!selectedItem}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSelectedItem(null)}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={() => setSelectedItem(null)}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalSummary}>{selectedItem?.summary}</Text>
+            <Text style={styles.modalDate}>{selectedItem ? formatDate(selectedItem.ts) : ''}</Text>
+            <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
+              <Text style={styles.modalPreview}>{selectedItem?.preview}</Text>
+            </ScrollView>
+            <Pressable style={styles.modalClose} onPress={() => setSelectedItem(null)}>
+              <Text style={styles.modalCloseText}>CLOSE</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -232,5 +259,57 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
     lineHeight: 22,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    justifyContent: 'flex-end',
+  },
+  modalCard: {
+    backgroundColor: theme.colors.surfaceElevated,
+    borderTopLeftRadius: theme.radius.xl,
+    borderTopRightRadius: theme.radius.xl,
+    borderWidth: 0.5,
+    borderColor: `${theme.colors.gold}40`,
+    padding: 24,
+    paddingBottom: 36,
+    maxHeight: '80%',
+    gap: 10,
+  },
+  modalSummary: {
+    color: theme.colors.textPrimary,
+    fontSize: 16,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+  },
+  modalDate: {
+    color: theme.colors.gold,
+    fontSize: 11,
+    letterSpacing: 0.5,
+    fontWeight: '500',
+  },
+  modalScroll: {
+    marginTop: 4,
+    maxHeight: 300,
+  },
+  modalPreview: {
+    color: theme.colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  modalClose: {
+    marginTop: 8,
+    alignSelf: 'center',
+    borderWidth: 1,
+    borderColor: `${theme.colors.gold}60`,
+    borderRadius: theme.radius.sm,
+    paddingHorizontal: 28,
+    paddingVertical: 9,
+  },
+  modalCloseText: {
+    color: theme.colors.gold,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 2,
   },
 });

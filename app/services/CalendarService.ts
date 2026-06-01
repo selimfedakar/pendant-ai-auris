@@ -1,4 +1,4 @@
-import * as Calendar from 'expo-calendar';
+import * as Calendar from 'expo-calendar/legacy';
 
 class CalendarService {
   async requestPermission(): Promise<boolean> {

@@ -33,6 +33,20 @@ class BackendService {
     return this.backendUrl;
   }
 
+  private async fetchWithTimeout(
+    url: string,
+    options: RequestInit,
+    timeoutMs = 30000,
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+      clearTimeout(id);
+    }
+  }
+
   private async readFileAsBase64(uri: string): Promise<string> {
     const fileUri = uri.startsWith('file://') ? uri : `file://${uri}`;
     return FileSystem.readAsStringAsync(fileUri, {
@@ -74,7 +88,7 @@ class BackendService {
     if (imageBase64) body.image_base64 = imageBase64;
     if (contextData) body.context_data = contextData;
 
-    const response = await fetch(`${this.backendUrl}/v1/process-audio-json`, {
+    const response = await this.fetchWithTimeout(`${this.backendUrl}/v1/process-audio-json`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Auris-Key': AURIS_API_KEY },
       body: JSON.stringify(body),
@@ -110,7 +124,7 @@ class BackendService {
     if (userProfession) body.user_profession = userProfession;
     if (contextData) body.context_data = contextData;
 
-    const response = await fetch(`${this.backendUrl}/v1/process-audio-stream-json`, {
+    const response = await this.fetchWithTimeout(`${this.backendUrl}/v1/process-audio-stream-json`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Auris-Key': AURIS_API_KEY },
       body: JSON.stringify(body),
@@ -138,7 +152,7 @@ class BackendService {
     if (personality) body.personality = personality;
     if (userName) body.user_name = userName;
 
-    const response = await fetch(`${this.backendUrl}/v1/summarize`, {
+    const response = await this.fetchWithTimeout(`${this.backendUrl}/v1/summarize`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Auris-Key': AURIS_API_KEY },
       body: JSON.stringify(body),
@@ -214,7 +228,7 @@ class BackendService {
           ? `${this.backendUrl}/v1/process-audio-json`
           : `${this.backendUrl}/v1/process-audio-stream-json`;
 
-        const response = await fetch(endpoint, {
+        const response = await this.fetchWithTimeout(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Auris-Key': AURIS_API_KEY },
           body: JSON.stringify(body),
@@ -235,7 +249,7 @@ class BackendService {
 
   async healthCheck(): Promise<boolean> {
     try {
-      const res = await fetch(this.backendUrl, { method: 'GET' });
+      const res = await this.fetchWithTimeout(this.backendUrl, { method: 'GET' }, 5000);
       return res.ok;
     } catch {
       return false;

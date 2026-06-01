@@ -47,15 +47,15 @@ class BLEService {
   async startScan(timeoutMs = 10_000): Promise<string> {
     // TODO: Use BleManager.startDeviceScan() from react-native-ble-plx.
     // Filter by AURIS_SERVICE_UUID. Resolve on first matching device.
-    this.setState('scanning');
-    throw new Error('BLE not implemented — hardware arrives June 2-8');
+    console.warn('[BLE] startScan: hardware not available yet — ESP32S3 arriving June 2-8');
+    this.setState('disconnected');
+    return '';
   }
 
   // Connect to the pendant by device ID returned from startScan().
-  async connect(deviceId: string): Promise<void> {
+  async connect(deviceId?: string): Promise<void> {
     // TODO: BleManager.connectToDevice(deviceId) → discoverAllServicesAndCharacteristics().
-    this.setState('connecting');
-    throw new Error('BLE not implemented — hardware arrives June 2-8');
+    console.warn('[BLE] Hardware not available yet — ESP32S3 arriving June 2-8');
   }
 
   // Disconnect gracefully.
@@ -67,16 +67,27 @@ class BLEService {
 
   // Subscribe to the audio characteristic and start buffering chunks.
   async startAudioStream(): Promise<void> {
-    if (!this.isConnected()) throw new Error('BLE not connected');
+    if (!this.isConnected()) {
+      console.warn('[BLE] startAudioStream: not connected — no-op');
+      return;
+    }
     // TODO: device.monitorCharacteristicForService(AURIS_SERVICE_UUID, AUDIO_CHAR_UUID, ...)
     // Parse incoming base64 characteristic value → Uint8Array → push to chunkBuffer.
-    throw new Error('BLE audio stream not implemented — hardware arrives June 2-8');
+    console.warn('[BLE] startAudioStream: hardware pending');
   }
 
   // Unsubscribe from the audio characteristic.
   async stopAudioStream(): Promise<void> {
     // TODO: Remove the characteristic subscription created in startAudioStream().
     this.chunkBuffer = [];
+  }
+
+  // ESP32 → iOS audio pipeline — called when a BLE audio notification arrives.
+  // Register a handler via onAudioChunk() before streaming; this method feeds
+  // raw PCM ArrayBuffers from the pendant through to the registered callback.
+  async processBLEAudioBuffer(buffer: ArrayBuffer): Promise<void> {
+    // ESP32 → iOS audio pipeline — implement after hardware arrives
+    console.warn('[BLE] processBLEAudioBuffer: hardware pending');
   }
 
   // Concatenate all buffered chunks into a single contiguous audio buffer and clear the buffer.

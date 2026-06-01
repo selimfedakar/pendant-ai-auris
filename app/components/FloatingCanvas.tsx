@@ -30,6 +30,7 @@ function SideNode({ phase, onPress }: { phase: 0 | 1; onPress?: () => void }) {
   const tx = useSharedValue(0);
   const auraOpacity = useSharedValue(0.2);
   const scalePulse = useSharedValue(1);
+  const rotation = useSharedValue(0);
 
   useEffect(() => {
     ty.value = withRepeat(
@@ -64,6 +65,17 @@ function SideNode({ phase, onPress }: { phase: 0 | 1; onPress?: () => void }) {
       -1,
       false,
     );
+    // Subtle rotation: 0° → 2° → -2° → 0°, ~4.5s cycle
+    const cycleDuration = 4500 + phase * 300;
+    rotation.value = withRepeat(
+      withSequence(
+        withTiming(2, { duration: cycleDuration / 4, easing: Easing.inOut(Easing.sin) }),
+        withTiming(-2, { duration: cycleDuration / 2, easing: Easing.inOut(Easing.sin) }),
+        withTiming(0, { duration: cycleDuration / 4, easing: Easing.inOut(Easing.sin) }),
+      ),
+      -1,
+      false,
+    );
   }, []);
 
   const floatStyle = useAnimatedStyle(() => ({
@@ -78,19 +90,50 @@ function SideNode({ phase, onPress }: { phase: 0 | 1; onPress?: () => void }) {
     opacity: auraOpacity.value,
   }));
 
+  const diamondStyle = useAnimatedStyle(() => ({
+    transform: [
+      { rotate: `${45 + rotation.value}deg` },
+    ],
+  }));
+
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={onPress ? 0.7 : 1} disabled={!onPress}>
       <Animated.View style={[styles.sideColumn, floatStyle]}>
         <Text style={styles.sideLabel}>CONTEXTUAL{'\n'}ANALYSIS</Text>
         <View style={styles.sideNodeWrapper}>
           <Animated.View style={[StyleSheet.absoluteFill, styles.sideNodeAura, auraStyle]} />
-          <View style={styles.sideNodeDiamond}>
+          <Animated.View style={[styles.sideNodeDiamond, diamondStyle]}>
             <View style={styles.sideNodeCore} />
-          </View>
+          </Animated.View>
         </View>
       </Animated.View>
     </TouchableOpacity>
   );
+}
+
+interface ConnectorProps {
+  phase: 0 | 1;
+}
+
+function AnimatedConnector({ phase }: ConnectorProps) {
+  const opacity = useSharedValue(0.3);
+
+  useEffect(() => {
+    opacity.value = withRepeat(
+      withSequence(
+        withTiming(0.7, { duration: 1750 + phase * 200, easing: Easing.inOut(Easing.sin) }),
+        withTiming(0.3, { duration: 1750 + phase * 200, easing: Easing.inOut(Easing.sin) }),
+      ),
+      -1,
+      false,
+    );
+  }, []);
+
+  const animStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+  }));
+
+  return <Animated.View style={[styles.connector, animStyle]} />;
 }
 
 interface CenterNodeProps {
@@ -115,10 +158,11 @@ function CenterNode({ onPress, onDismissImage, hasCapturedImage, hasAnalysisResu
       -1,
       false,
     );
+    // Pulse amplitude: 0.15 → 1.0 → 0.15
     pulseOpacity.value = withRepeat(
       withSequence(
-        withTiming(1, { duration: 1800, easing: Easing.inOut(Easing.sin) }),
-        withTiming(0.3, { duration: 1800, easing: Easing.inOut(Easing.sin) }),
+        withTiming(1.0, { duration: 1800, easing: Easing.inOut(Easing.sin) }),
+        withTiming(0.15, { duration: 1800, easing: Easing.inOut(Easing.sin) }),
       ),
       -1,
       false,
@@ -178,7 +222,7 @@ export function FloatingCanvas({
     <View style={styles.canvas}>
       <View style={styles.row}>
         <SideNode phase={0} onPress={onContextualPress} />
-        <View style={styles.connector} />
+        <AnimatedConnector phase={0} />
         <CenterNode
           onPress={onVisionPress}
           onDismissImage={onDismissImage}
@@ -186,7 +230,7 @@ export function FloatingCanvas({
           hasAnalysisResult={hasAnalysisResult}
           capturedImageBase64={capturedImageBase64}
         />
-        <View style={styles.connector} />
+        <AnimatedConnector phase={1} />
         <SideNode phase={1} onPress={onContextualPress} />
       </View>
     </View>
@@ -224,9 +268,12 @@ const styles = StyleSheet.create({
     fontSize: 7,
     fontWeight: '600',
     color: `${CRIMSON_BRIGHT}CC`,
-    letterSpacing: 1.1,
+    letterSpacing: 1.4,
     textAlign: 'center',
     lineHeight: 10,
+    textShadowColor: CRIMSON_BRIGHT,
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 4,
   },
   sideNodeWrapper: {
     width: 56,
@@ -252,7 +299,7 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: `${CRIMSON_BRIGHT}CC`,
     backgroundColor: `${CRIMSON}35`,
-    transform: [{ rotate: '45deg' }],
+    // Base 45deg rotation is applied via animated style now
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -268,8 +315,8 @@ const styles = StyleSheet.create({
     height: 44,
     paddingHorizontal: 16,
     borderRadius: 22,
-    borderWidth: 0.5,
-    borderColor: `${CYAN}50`,
+    borderWidth: 1,
+    borderColor: `${CYAN}90`,
     backgroundColor: `${CYAN}09`,
     overflow: 'hidden',
     shadowColor: CYAN,

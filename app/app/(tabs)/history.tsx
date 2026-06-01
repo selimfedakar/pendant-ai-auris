@@ -1,5 +1,14 @@
-import { useState, useEffect, useMemo } from 'react';
-import { View, Text, StyleSheet, SectionList, Pressable, Modal, ScrollView } from 'react-native';
+import React, { useState, useEffect, useMemo } from 'react';
+import { View, Text, StyleSheet, Pressable, Modal, ScrollView } from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedScrollHandler,
+  useAnimatedStyle,
+  interpolate,
+  Extrapolation,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
@@ -45,6 +54,92 @@ function groupHistory(entries: HistoryEntry[]): Section[] {
   return Array.from(map.entries()).map(([title, data]) => ({ title, data }));
 }
 
+// ─── Animated section header ─────────────────────────────────────────────────
+
+function AnimatedSectionHeader({
+  scrollY,
+  children,
+}: {
+  scrollY: Animated.SharedValue<number>;
+  children: React.ReactNode;
+}) {
+  const headerStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(scrollY.value, [0, 60], [1, 0.5], Extrapolation.CLAMP),
+  }));
+
+  return <Animated.View style={headerStyle}>{children}</Animated.View>;
+}
+
+// ─── Animated card wrapper ────────────────────────────────────────────────────
+
+function AnimatedHistoryCard({
+  children,
+  index,
+  scrollY,
+  itemHeight,
+}: {
+  children: React.ReactNode;
+  index: number;
+  scrollY: Animated.SharedValue<number>;
+  itemHeight: number;
+}) {
+  const entryOpacity = useSharedValue(0);
+  const entryY = useSharedValue(16);
+
+  useEffect(() => {
+    const delay = Math.min(index * 40, 300);
+    const t = setTimeout(() => {
+      entryOpacity.value = withTiming(1, { duration: 260 });
+      entryY.value = withSpring(0, { damping: 16, stiffness: 100 });
+    }, delay);
+    return () => clearTimeout(t);
+  }, []);
+
+  const animatedStyle = useAnimatedStyle(() => {
+    const itemOffset = index * itemHeight;
+    const inputRange = [itemOffset - itemHeight * 2, itemOffset - itemHeight * 0.5];
+
+    const scale = interpolate(
+      scrollY.value,
+      inputRange,
+      [1, 0.88],
+      Extrapolation.CLAMP,
+    );
+    const scrollOpacity = interpolate(
+      scrollY.value,
+      inputRange,
+      [1, 0.2],
+      Extrapolation.CLAMP,
+    );
+    const rotateXDeg = interpolate(
+      scrollY.value,
+      inputRange,
+      [0, -5],
+      Extrapolation.CLAMP,
+    );
+    const translateY = interpolate(
+      scrollY.value,
+      inputRange,
+      [0, -8],
+      Extrapolation.CLAMP,
+    );
+
+    return {
+      transform: [
+        { perspective: 800 },
+        { scale },
+        { rotateX: `${rotateXDeg}deg` },
+        { translateY: translateY + entryY.value },
+      ],
+      opacity: scrollOpacity * entryOpacity.value,
+    };
+  });
+
+  return <Animated.View style={animatedStyle}>{children}</Animated.View>;
+}
+
+// ─── Static sub-components ───────────────────────────────────────────────────
+
 function SectionHeader({ title, count }: { title: string; count: number }) {
   return (
     <View style={styles.sectionHeader}>
@@ -77,10 +172,19 @@ function HistoryCard({ item, onPress }: { item: HistoryEntry; onPress: () => voi
   );
 }
 
+// ─── Screen ───────────────────────────────────────────────────────────────────
+
 export default function HistoryScreen() {
   const insets = useSafeAreaInsets();
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [selectedItem, setSelectedItem] = useState<HistoryEntry | null>(null);
+
+  const scrollY = useSharedValue(0);
+  const scrollHandler = useAnimatedScrollHandler({
+    onScroll: (e) => {
+      scrollY.value = e.contentOffset.y;
+    },
+  });
 
   useEffect(() => {
     historyService.load().then(setHistory);
@@ -99,12 +203,24 @@ export default function HistoryScreen() {
         )}
       </View>
 
-      <SectionList
+      <Animated.SectionList
+        onScroll={scrollHandler}
+        scrollEventThrottle={16}
         sections={sections}
         keyExtractor={(item) => item.id}
-        renderItem={({ item }) => <HistoryCard item={item} onPress={() => setSelectedItem(item)} />}
+        renderItem={({ item, index }) => (
+          <AnimatedHistoryCard
+            index={index}
+            scrollY={scrollY}
+            itemHeight={88}
+          >
+            <HistoryCard item={item} onPress={() => setSelectedItem(item)} />
+          </AnimatedHistoryCard>
+        )}
         renderSectionHeader={({ section }) => (
-          <SectionHeader title={section.title} count={section.data.length} />
+          <AnimatedSectionHeader scrollY={scrollY}>
+            <SectionHeader title={section.title} count={section.data.length} />
+          </AnimatedSectionHeader>
         )}
         contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
         showsVerticalScrollIndicator={false}

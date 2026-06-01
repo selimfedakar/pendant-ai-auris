@@ -15,8 +15,11 @@ class NotificationService {
 
   async scheduleLocal(title: string, body: string, data?: Record<string, unknown>): Promise<void> {
     if (!this.ready) return;
+    const safeBody = typeof body === 'string' && body.length > 60
+      ? body.slice(0, 57) + '…'
+      : body;
     await Notifications.scheduleNotificationAsync({
-      content: { title, body, data: data ?? {} },
+      content: { title, body: safeBody, data: data ?? {} },
       trigger: null,
     });
   }

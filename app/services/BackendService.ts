@@ -6,7 +6,14 @@ const BACKEND_URL_KEY = '@auris:backend_url';
 const DEFAULT_BACKEND_URL = 'https://auris-backend.aurisapi.workers.dev';
 const AURIS_API_KEY = process.env.EXPO_PUBLIC_AURIS_API_KEY ?? '';
 
-export type DetectedEvent = { title: string; datetime: string; participants: string[] };
+export type DetectedEvent = {
+  title: string;
+  datetime?: string;
+  general_timeframe?: 'morning' | 'afternoon' | 'evening' | 'all_day';
+  location?: string;
+  description?: string;
+  participants: string[];
+};
 
 export type ProcessAudioResult = {
   transcript: string;

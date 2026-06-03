@@ -371,7 +371,7 @@ app.post("/v1/process-audio-json", async (c) => {
     let audioBuffer: ArrayBuffer = new ArrayBuffer(0);
     let ttsSkipped = false;
     try {
-      audioBuffer = await synthesizeSpeech(reply, c.env.OPENAI_API_KEY);
+      audioBuffer = await synthesizeSpeech(reply, c.env.GROQ_API_KEY);
     } catch (ttsErr) {
       console.error("TTS failed (non-fatal):", ttsErr instanceof Error ? ttsErr.message : ttsErr);
       ttsSkipped = true;
@@ -465,9 +465,12 @@ app.post("/v1/process-audio-stream-json", async (c) => {
     ]).catch(() => {});
 
     const sentences = splitIntoSentences(reply).filter((s) => s.length > 0);
-    const openaiApiKey = c.env.OPENAI_API_KEY;
+    const groqApiKey = c.env.GROQ_API_KEY;
     const ttsPromises: Promise<ArrayBuffer | null>[] = sentences.map((sentence) =>
-      synthesizeSpeech(sentence, openaiApiKey).catch(() => null)
+      synthesizeSpeech(sentence, groqApiKey).catch((err) => {
+        console.error("TTS sentence failed:", err instanceof Error ? err.message : err);
+        return null;
+      })
     );
 
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
@@ -641,7 +644,7 @@ app.post("/v1/process-audio-raw", async (c) => {
     let audioBuffer: ArrayBuffer = new ArrayBuffer(0);
     let ttsSkipped = false;
     try {
-      audioBuffer = await synthesizeSpeech(reply, c.env.OPENAI_API_KEY);
+      audioBuffer = await synthesizeSpeech(reply, c.env.GROQ_API_KEY);
     } catch (ttsErr) {
       console.error("TTS failed (non-fatal):", ttsErr instanceof Error ? ttsErr.message : ttsErr);
       ttsSkipped = true;
@@ -741,9 +744,12 @@ app.post("/v1/process-audio-stream", async (c) => {
     ]).catch(() => {});
 
     const sentences = splitIntoSentences(reply).filter((s) => s.length > 0);
-    const openaiApiKey = c.env.OPENAI_API_KEY;
+    const groqApiKey = c.env.GROQ_API_KEY;
     const ttsPromises: Promise<ArrayBuffer | null>[] = sentences.map((sentence) =>
-      synthesizeSpeech(sentence, openaiApiKey).catch(() => null)
+      synthesizeSpeech(sentence, groqApiKey).catch((err) => {
+        console.error("TTS sentence failed:", err instanceof Error ? err.message : err);
+        return null;
+      })
     );
 
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
@@ -831,7 +837,7 @@ app.post("/v1/process-audio", async (c) => {
     ];
     await saveHistory(c.env.CONVERSATIONS, userId, updatedHistory);
 
-    const audioBuffer = await synthesizeSpeech(reply, c.env.OPENAI_API_KEY);
+    const audioBuffer = await synthesizeSpeech(reply, c.env.GROQ_API_KEY);
 
     return new Response(audioBuffer, {
       status: 200,

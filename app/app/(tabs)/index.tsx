@@ -16,6 +16,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Google from 'expo-auth-session/providers/google';
 import * as WebBrowser from 'expo-web-browser';
 import { AurisOrb, OrbState } from '@/components/AurisOrb';
+import { CalendarConfirmationCard } from '@/components/CalendarConfirmationCard';
 import { FloatingCanvas } from '@/components/FloatingCanvas';
 import { VisionAnalysis } from '@/components/VisionAnalysis';
 import { ContextualBottomSheet } from '@/components/ContextualBottomSheet';
@@ -43,7 +44,7 @@ const CAMERA_VIOLET = '#7C3AED';
 const CAMERA_GLOW = '#A855F7';
 
 type Todo = { id: string; text: string; done: boolean; createdAt: number; source: 'manual' | 'voice' | 'auris' };
-type ScheduledEvent = { id: string; title: string; datetime: string; participants: string[]; done: boolean; createdAt: number };
+type ScheduledEvent = { id: string; title: string; datetime: string; participants: string[]; done: boolean; createdAt: number; general_timeframe?: string; location?: string; description?: string };
 type Message = { id: string; role: 'user' | 'auris'; text: string };
 type Mode = 'solo' | 'social';
 
@@ -77,6 +78,13 @@ export default function HomeScreen() {
   const [contextualSheetVisible, setContextualSheetVisible] = useState(false);
   const [activeModule, setActiveModule] = useState<string>('visual');
   const [audioUnavailable, setAudioUnavailable] = useState(false);
+  const [pendingCalendarAction, setPendingCalendarAction] = useState<{
+    title: string;
+    datetime?: string;
+    general_timeframe?: string;
+    location?: string;
+    description?: string;
+  } | null>(null);
   const streamingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Vision hint pulse animation
@@ -181,12 +189,30 @@ export default function HomeScreen() {
     const newEvents: ScheduledEvent[] = detected.map((e) => ({
       id: `${Date.now()}-${Math.random()}`,
       title: e.title,
-      datetime: e.datetime,
+      datetime: e.datetime ?? new Date().toISOString(),
       participants: Array.isArray(e.participants) ? e.participants : [],
       done: false,
       createdAt: Date.now(),
+      general_timeframe: e.general_timeframe,
+      location: e.location,
+      description: e.description,
     }));
     await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify([...newEvents, ...existing]));
+  }, []);
+
+  const handleCalendarConfirm = useCallback(async (confirmed: { title: string; startDate: Date; endDate: Date; allDay: boolean; location?: string; notes?: string }) => {
+    setPendingCalendarAction(null);
+    try {
+      await calendarService.syncWithCalendar(confirmed);
+      await appendEvents([{ title: confirmed.title, datetime: confirmed.startDate.toISOString(), participants: [], location: confirmed.location }]);
+      addMessage('auris', `Added to your calendar: ${confirmed.title}`);
+    } catch (e) {
+      addMessage('auris', 'Could not add to calendar. Please check calendar permissions.');
+    }
+  }, [appendEvents, addMessage]);
+
+  const handleCalendarCancel = useCallback(() => {
+    setPendingCalendarAction(null);
   }, []);
 
   useEffect(() => {
@@ -710,6 +736,14 @@ export default function HomeScreen() {
         analysis={visionPanel.analysis}
         visible={visionPanel.visible}
         onDismiss={() => setVisionPanel((p) => ({ ...p, visible: false }))}
+      />
+
+      {/* Calendar confirmation card */}
+      <CalendarConfirmationCard
+        visible={pendingCalendarAction !== null}
+        event={pendingCalendarAction}
+        onConfirm={handleCalendarConfirm}
+        onCancel={handleCalendarCancel}
       />
 
       {/* Camera modal */}

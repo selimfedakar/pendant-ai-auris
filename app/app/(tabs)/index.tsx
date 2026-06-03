@@ -385,24 +385,26 @@ export default function HomeScreen() {
             })
           : Promise.resolve(),
         appendTodos(todos),
-        appendEvents(events),
+        events.length > 0
+          ? (() => { setPendingCalendarAction(events[0]!); return Promise.resolve(); })()
+          : Promise.resolve(),
       ]);
 
-      // Stream text in speaking state — fast (~1-3s for a short reply)
+      // Start TTS and typewriter concurrently — audio fires immediately
+      // (not awaited) so the orb transition and text animation are not blocked.
       if (reply && !imageSnapshot) {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
         setOrbState('speaking');
-        await addStreamingMessage(reply);
+        if (audioUri) {
+          audioService.playFromUri(audioUri).catch((e) => console.warn('[Auris] TTS playback:', e));
+        }
+        await addStreamingMessage(reply);  // typewriter controls orb timing
       }
 
-      // Ready for next input immediately — audio plays in background
+      // Typewriter finished — ready for next input; audio continues in background
       setOrbState('idle');
       isProcessingRef.current = false;
       setAudioUnavailable(!audioUri && !!reply);
-
-      if (audioUri) {
-        audioService.playFromUri(audioUri).catch(() => {});
-      }
     } catch (err: any) {
       const msg = String(err?.message ?? 'Something went wrong');
       setError(msg);

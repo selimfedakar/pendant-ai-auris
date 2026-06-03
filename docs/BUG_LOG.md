@@ -382,4 +382,88 @@ Additionally, passing a bare `Blob` to `formData.append("file", blob, "audio.m4a
 
 ---
 
+---
+
+## [2026-06-03] VisionAnalysis panel too short to display analysis text
+
+**Symptom**
+VisionAnalysis panel appeared empty; analysis text was not readable.
+
+**Root cause**
+`PANEL_HEIGHT` was set to `SCREEN_HEIGHT * 0.25` (~213pt on an 852pt screen). After the header row (65pt) and drag handle (25pt), only ~123pt remained for scroll content — too small to show meaningful analysis text.
+
+**Fix**
+Changed `PANEL_HEIGHT` from `SCREEN_HEIGHT * 0.25` to `SCREEN_HEIGHT * 0.42` in `VisionAnalysis.tsx`.
+
+---
+
+## [2026-06-03] CalendarConfirmationCard appeared after every vision analysis
+
+**Symptom**
+`CalendarConfirmationCard` appeared after every vision analysis (photo + audio pipeline), interrupting the analysis result view.
+
+**Root cause**
+`stopAndProcess` in `index.tsx` fired `setPendingCalendarAction` for ALL detected events regardless of whether the request was vision mode or audio-only mode. Vision analysis replies sometimes contained event-like phrasing that Claude detected, triggering the calendar card unintentionally.
+
+**Fix**
+Added an `!imageSnapshot` guard so the calendar card only fires for audio-only pipeline results.
+
+---
+
+## [2026-06-03] "PHOTO READY · TAP ANALYZE OR ORB" hint hidden behind thumbnail card
+
+**Symptom**
+"PHOTO READY · TAP ANALYZE OR ORB" hint text was hidden behind the thumbnail preview card.
+
+**Root cause**
+`thumbnailCard` was positioned at `bottom: 180, right: 20`. The hint row sits at approximately 220pt from the screen bottom. The thumbnail (72px tall, spanning from bottom 180 to 252) overlapped horizontally with the right portion of the centered hint text.
+
+**Fix**
+Moved `thumbnailCard` to `bottom: 264` and reduced its size to 60×60.
+
+---
+
+## [2026-06-03] "tap to talk" and "CAPTURE" label visually overlapping
+
+**Symptom**
+"tap to talk" hint and the "CAPTURE" camera button label appeared visually overlapping / cluttered in the lower screen area.
+
+**Root cause**
+`hintRow` shows "tap to talk" when idle with no photo. `cameraSection` rendered a "CAPTURE" label directly below the camera button. Both rendered in the same column within ~50pt of each other, creating visual noise.
+
+**Fix**
+Removed the "CAPTURE" label when no photo is attached (icon is self-explanatory). Only show the "RETAKE" label when a photo has already been captured.
+
+---
+
+## [2026-06-03] VAD ambient-noise trigger causes "You're welcome" vision analysis
+
+**Symptom**
+VAD fired after 1.5s of ambient silence during vision mode. Groq STT transcribed background noise as "thank you" (or a similar short phrase). Claude replied "You're welcome", and VisionAnalysis panel showed "You're welcome" as the image analysis result.
+
+**Root cause**
+AudioService VAD threshold (1.5s silence at −45 dB) fired on ambient noise with no real user speech. The recording was not rejected by the backend (>1000 bytes). Claude's reply was a social nicety rather than a real image analysis.
+
+**Fix**
+Added a guard in `stopAndProcess`: if vision mode (`imageSnapshot` set) AND transcript word count ≤ 3 AND reply length < 60 chars, restore `capturedImageBase64`, display the prompt "Speak a question about the image to start analysis." and return early without running the analysis flow.
+
+---
+
+## [2026-06-03] Pressing orb after vision analysis appeared to do nothing
+
+**Symptom**
+After a successful (or bad) vision analysis, pressing the orb appeared to do nothing from the user's perspective.
+
+**Root cause**
+`stopAndProcess` clears `capturedImageBase64` at the start. After vision analysis completed, `visionPanel.analysis` was set from the previous result and the CenterNode chip showed "SCAN RESULT". Taking a new photo set `capturedImageBase64` but did NOT clear `visionPanel.analysis`, so the chip remained "SCAN RESULT" and tapping it re-opened the old analysis panel instead of triggering a new recording. Pressing the orb then started an audio-only recording (no image context) because `capturedImageBase64` had already been cleared.
+
+**Fix**
+In `handleTakePicture`, after `setCapturedImageBase64(photo.base64)`, added:
+```ts
+setVisionPanel({ imageBase64: null, transcript: '', analysis: '', visible: false })
+```
+This resets analysis state whenever a new photo is captured.
+
+---
+
 *Updated automatically — add new entries at the top of each session.*

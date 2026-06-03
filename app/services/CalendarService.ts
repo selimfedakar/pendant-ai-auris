@@ -11,6 +11,32 @@ class CalendarService {
     return status === 'granted';
   }
 
+  async syncWithCalendar(event: {
+    title: string;
+    startDate: Date;
+    endDate: Date;
+    allDay: boolean;
+    location?: string;
+    notes?: string;
+  }): Promise<void> {
+    const permitted = await this.hasPermission() || await this.requestPermission();
+    if (!permitted) throw new Error('Calendar permission denied');
+
+    const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
+    if (!calendars.length) throw new Error('No calendars available');
+
+    const writable = calendars.find((c) => c.allowsModifications) ?? calendars[0];
+
+    await Calendar.createEventAsync(writable.id, {
+      title: event.title,
+      startDate: event.startDate,
+      endDate: event.endDate,
+      allDay: event.allDay,
+      location: event.location,
+      notes: event.notes,
+    });
+  }
+
   async getUpcomingEventsContext(): Promise<string | null> {
     const permitted = await this.hasPermission() || await this.requestPermission();
     if (!permitted) return null;

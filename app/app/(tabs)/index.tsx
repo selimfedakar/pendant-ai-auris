@@ -9,6 +9,7 @@ import Animated, {
   withRepeat,
   withSequence,
   withSpring,
+  Easing,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -110,8 +111,12 @@ export default function HomeScreen() {
 
   // Thumbnail preview card animation
   const thumbnailScale = useSharedValue(0);
+  const thumbFloatY = useSharedValue(0);
   const thumbnailStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: thumbnailScale.value }],
+    transform: [
+      { scale: thumbnailScale.value },
+      { translateY: thumbFloatY.value },
+    ],
   }));
 
   // Message list scroll Y tracker

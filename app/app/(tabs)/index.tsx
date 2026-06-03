@@ -342,6 +342,7 @@ export default function HomeScreen() {
         return;
       }
       setCapturedImageBase64(photo.base64);
+      setVisionPanel({ imageBase64: null, transcript: '', analysis: '', visible: false });
     } catch {
       // non-fatal
     } finally {
@@ -529,6 +530,7 @@ export default function HomeScreen() {
     }
 
     try {
+      setAudioUnavailable(false);
       await audioService.startRecording(stopAndProcess);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
       setOrbState('listening');

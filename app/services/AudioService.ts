@@ -97,7 +97,14 @@ class AudioService {
       }
     });
 
-    await recorder.prepareToRecordAsync();
+    // prepareToRecordAsync can fail on first launch if the audio session
+    // hasn't settled yet (e.g. right after a permission grant). Retry once.
+    try {
+      await recorder.prepareToRecordAsync();
+    } catch {
+      await new Promise(r => setTimeout(r, 500));
+      await recorder.prepareToRecordAsync();
+    }
     recorder.record();
     this.recorder = recorder;
   }
@@ -132,6 +139,12 @@ class AudioService {
       playsInSilentMode: true,
       interruptionMode: 'mixWithOthers',
     });
+
+    // Give iOS 100ms to fully commit the audio session category change
+    // (allowsRecording: false releases the recording session so the speaker
+    // route is restored; without the delay the audio can still come out of
+    // the earpiece on the first play after a recording session).
+    await new Promise(r => setTimeout(r, 100));
 
     const player = createAudioPlayer({ uri });
     this.player = player;

@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from 'react';
-import { View, Text, Pressable, StyleSheet, Image, Dimensions } from 'react-native';
+import React, { useEffect } from 'react';
+import { View, Text, Pressable, StyleSheet, Image } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -16,10 +16,6 @@ const CYAN = '#00D4FF';
 const GOLD = theme.colors.gold;
 const CRIMSON = '#C0392B';
 const CRIMSON_BRIGHT = '#E74C3C';
-
-const screenWidth = Dimensions.get('window').width;
-const WIDGET_WIDTH = 220;
-const EDGE_PADDING = 16;
 
 interface FloatingCanvasProps {
   onVisionPress: () => void;
@@ -113,30 +109,6 @@ function SideNode({ phase }: { phase: 0 | 1 }) {
   );
 }
 
-interface ConnectorProps {
-  phase: 0 | 1;
-}
-
-function AnimatedConnector({ phase }: ConnectorProps) {
-  const opacity = useSharedValue(0.3);
-
-  useEffect(() => {
-    opacity.value = withRepeat(
-      withSequence(
-        withTiming(0.7, { duration: 1750 + phase * 200, easing: Easing.inOut(Easing.sin) }),
-        withTiming(0.3, { duration: 1750 + phase * 200, easing: Easing.inOut(Easing.sin) }),
-      ),
-      -1,
-      false,
-    );
-  }, []);
-
-  const animStyle = useAnimatedStyle(() => ({
-    opacity: opacity.value,
-  }));
-
-  return <Animated.View style={[styles.connector, animStyle]} />;
-}
 
 interface CenterNodeProps {
   onPress: () => void;
@@ -217,82 +189,70 @@ export function FloatingCanvas({
   capturedImageBase64,
   onContextualPress,
 }: FloatingCanvasProps) {
-  const translateX = useSharedValue(0);
-  const translateY = useSharedValue(0);
   const contextX = useSharedValue(0);
   const contextY = useSharedValue(0);
-
-  const onContextualPressRef = useRef(onContextualPress ?? (() => {}));
-  useEffect(() => {
-    onContextualPressRef.current = onContextualPress ?? (() => {});
-  }, [onContextualPress]);
+  const offsetX = useSharedValue(0);
+  const offsetY = useSharedValue(0);
 
   const panGesture = Gesture.Pan()
     .minDistance(5)
     .onStart(() => {
-      contextX.value = translateX.value;
-      contextY.value = translateY.value;
+      contextX.value = offsetX.value;
+      contextY.value = offsetY.value;
     })
     .onUpdate((e) => {
-      translateX.value = contextX.value + e.translationX;
-      translateY.value = contextY.value + e.translationY;
+      offsetX.value = contextX.value + e.translationX;
+      offsetY.value = contextY.value + e.translationY;
     })
     .onEnd(() => {
-      const currentCenterX = screenWidth / 2 + translateX.value;
-      const snapRight = currentCenterX > screenWidth / 2;
-      const targetX = snapRight
-        ? screenWidth / 2 - WIDGET_WIDTH / 2 - EDGE_PADDING
-        : -(screenWidth / 2 - WIDGET_WIDTH / 2 - EDGE_PADDING);
-      translateX.value = withSpring(targetX, { damping: 18, stiffness: 180 });
+      // stay where dropped — no snap back
     });
 
   const dragStyle = useAnimatedStyle(() => ({
     transform: [
-      { translateX: translateX.value },
-      { translateY: translateY.value },
+      { translateX: offsetX.value },
+      { translateY: offsetY.value },
     ],
   }));
 
   return (
-    <GestureDetector gesture={panGesture}>
-      <Animated.View style={[styles.canvas, dragStyle]}>
-        <View style={styles.row}>
+    <View style={styles.canvas}>
+      <GestureDetector gesture={panGesture}>
+        <Animated.View style={dragStyle}>
           <Pressable onPress={onContextualPress}>
             <SideNode phase={0} />
           </Pressable>
-          <AnimatedConnector phase={0} />
-          <CenterNode
-            onPress={onVisionPress}
-            onDismissImage={onDismissImage}
-            hasCapturedImage={hasCapturedImage}
-            hasAnalysisResult={hasAnalysisResult}
-            capturedImageBase64={capturedImageBase64}
-          />
-        </View>
-      </Animated.View>
-    </GestureDetector>
+        </Animated.View>
+      </GestureDetector>
+      <View style={styles.centerWrapper} pointerEvents="box-none">
+        <CenterNode
+          onPress={onVisionPress}
+          onDismissImage={onDismissImage}
+          hasCapturedImage={hasCapturedImage}
+          hasAnalysisResult={hasAnalysisResult}
+          capturedImageBase64={capturedImageBase64}
+        />
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   canvas: {
-    paddingHorizontal: 24,
+    width: '100%',
+    paddingHorizontal: 20,
     paddingTop: 4,
     paddingBottom: 6,
-    alignItems: 'center',
+    alignItems: 'flex-start',
   },
-  row: {
-    flexDirection: 'row',
+  centerWrapper: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
     alignItems: 'center',
-  },
-  connector: {
-    width: 32,
-    height: 1.5,
-    backgroundColor: `${GOLD}45`,
-    shadowColor: GOLD,
-    shadowOffset: { width: 0, height: 0 },
-    shadowRadius: 8,
-    shadowOpacity: 0.65,
+    justifyContent: 'center',
   },
   // --- Side node ---
   sideColumn: {

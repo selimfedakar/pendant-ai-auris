@@ -1,5 +1,5 @@
-import React, { useEffect } from 'react';
-import { View, Text, Pressable, StyleSheet, Image, TouchableOpacity } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { View, Text, Pressable, StyleSheet, Image, Dimensions } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -9,12 +9,17 @@ import Animated, {
   withSpring,
   Easing,
 } from 'react-native-reanimated';
+import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import { theme } from '@/constants/theme';
 
 const CYAN = '#00D4FF';
 const GOLD = theme.colors.gold;
 const CRIMSON = '#C0392B';
 const CRIMSON_BRIGHT = '#E74C3C';
+
+const screenWidth = Dimensions.get('window').width;
+const WIDGET_WIDTH = 220;
+const EDGE_PADDING = 16;
 
 interface FloatingCanvasProps {
   onVisionPress: () => void;
@@ -25,7 +30,7 @@ interface FloatingCanvasProps {
   onContextualPress?: () => void;
 }
 
-function SideNode({ phase, onPress }: { phase: 0 | 1; onPress?: () => void }) {
+function SideNode({ phase }: { phase: 0 | 1 }) {
   const ty = useSharedValue(0);
   const tx = useSharedValue(0);
   const auraOpacity = useSharedValue(0.2);
@@ -65,7 +70,6 @@ function SideNode({ phase, onPress }: { phase: 0 | 1; onPress?: () => void }) {
       -1,
       false,
     );
-    // Subtle rotation: 0° → 2° → -2° → 0°, ~4.5s cycle
     const cycleDuration = 4500 + phase * 300;
     rotation.value = withRepeat(
       withSequence(
@@ -97,17 +101,15 @@ function SideNode({ phase, onPress }: { phase: 0 | 1; onPress?: () => void }) {
   }));
 
   return (
-    <TouchableOpacity onPress={onPress} activeOpacity={onPress ? 0.7 : 1} disabled={!onPress}>
-      <Animated.View style={[styles.sideColumn, floatStyle]}>
-        <Text style={styles.sideLabel}>CONTEXTUAL{'\n'}ANALYSIS</Text>
-        <View style={styles.sideNodeWrapper}>
-          <Animated.View style={[StyleSheet.absoluteFill, styles.sideNodeAura, auraStyle]} />
-          <Animated.View style={[styles.sideNodeDiamond, diamondStyle]}>
-            <View style={styles.sideNodeCore} />
-          </Animated.View>
-        </View>
-      </Animated.View>
-    </TouchableOpacity>
+    <Animated.View style={[styles.sideColumn, floatStyle]}>
+      <Text style={styles.sideLabel}>CONTEXTUAL{'\n'}ANALYSIS</Text>
+      <View style={styles.sideNodeWrapper}>
+        <Animated.View style={[StyleSheet.absoluteFill, styles.sideNodeAura, auraStyle]} />
+        <Animated.View style={[styles.sideNodeDiamond, diamondStyle]}>
+          <View style={styles.sideNodeCore} />
+        </Animated.View>
+      </View>
+    </Animated.View>
   );
 }
 
@@ -158,7 +160,6 @@ function CenterNode({ onPress, onDismissImage, hasCapturedImage, hasAnalysisResu
       -1,
       false,
     );
-    // Pulse amplitude: 0.15 → 1.0 → 0.15
     pulseOpacity.value = withRepeat(
       withSequence(
         withTiming(1.0, { duration: 1800, easing: Easing.inOut(Easing.sin) }),
@@ -218,28 +219,65 @@ export function FloatingCanvas({
   capturedImageBase64,
   onContextualPress,
 }: FloatingCanvasProps) {
+  const translateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+  const contextX = useSharedValue(0);
+  const contextY = useSharedValue(0);
+
+  const onContextualPressRef = useRef(onContextualPress ?? (() => {}));
+  useEffect(() => {
+    onContextualPressRef.current = onContextualPress ?? (() => {});
+  }, [onContextualPress]);
+
+  const panGesture = Gesture.Pan()
+    .minDistance(5)
+    .onStart(() => {
+      contextX.value = translateX.value;
+      contextY.value = translateY.value;
+    })
+    .onUpdate((e) => {
+      translateX.value = contextX.value + e.translationX;
+      translateY.value = contextY.value + e.translationY;
+    })
+    .onEnd(() => {
+      const currentCenterX = screenWidth / 2 + translateX.value;
+      const snapRight = currentCenterX > screenWidth / 2;
+      const targetX = snapRight
+        ? screenWidth / 2 - WIDGET_WIDTH / 2 - EDGE_PADDING
+        : -(screenWidth / 2 - WIDGET_WIDTH / 2 - EDGE_PADDING);
+      translateX.value = withSpring(targetX, { damping: 18, stiffness: 180 });
+    });
+
+  const dragStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: translateX.value },
+      { translateY: translateY.value },
+    ],
+  }));
+
   return (
-    <View style={styles.canvas}>
-      <View style={styles.row}>
-        <SideNode phase={0} onPress={onContextualPress} />
-        <AnimatedConnector phase={0} />
-        <CenterNode
-          onPress={onVisionPress}
-          onDismissImage={onDismissImage}
-          hasCapturedImage={hasCapturedImage}
-          hasAnalysisResult={hasAnalysisResult}
-          capturedImageBase64={capturedImageBase64}
-        />
-        <AnimatedConnector phase={1} />
-        <SideNode phase={1} onPress={onContextualPress} />
-      </View>
-    </View>
+    <GestureDetector gesture={panGesture}>
+      <Animated.View style={[styles.canvas, dragStyle]}>
+        <View style={styles.row}>
+          <Pressable onPress={onContextualPress}>
+            <SideNode phase={0} />
+          </Pressable>
+          <AnimatedConnector phase={0} />
+          <CenterNode
+            onPress={onVisionPress}
+            onDismissImage={onDismissImage}
+            hasCapturedImage={hasCapturedImage}
+            hasAnalysisResult={hasAnalysisResult}
+            capturedImageBase64={capturedImageBase64}
+          />
+        </View>
+      </Animated.View>
+    </GestureDetector>
   );
 }
 
 const styles = StyleSheet.create({
   canvas: {
-    width: '100%',
     paddingHorizontal: 24,
     paddingTop: 4,
     paddingBottom: 6,
@@ -248,10 +286,9 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    width: '100%',
   },
   connector: {
-    flex: 1,
+    width: 32,
     height: 1.5,
     backgroundColor: `${GOLD}45`,
     shadowColor: GOLD,
@@ -299,7 +336,6 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: `${CRIMSON_BRIGHT}CC`,
     backgroundColor: `${CRIMSON}35`,
-    // Base 45deg rotation is applied via animated style now
     alignItems: 'center',
     justifyContent: 'center',
   },

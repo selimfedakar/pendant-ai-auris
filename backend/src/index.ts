@@ -102,7 +102,14 @@ async function transcribeAudio(audioBlob: Blob, groqApiKey: string): Promise<str
   return data.text.trim();
 }
 
-type DetectedEvent = { title: string; datetime: string; participants: string[] };
+type DetectedEvent = {
+  title: string;
+  datetime?: string;
+  general_timeframe?: 'morning' | 'afternoon' | 'evening' | 'all_day';
+  location?: string;
+  description?: string;
+  participants: string[];
+};
 type ReplyResult = { reply: string; todos: string[]; events: DetectedEvent[] };
 
 function detectionSuffix(): string {
@@ -110,8 +117,12 @@ function detectionSuffix(): string {
   return (
     `Today's date and time is ${now}. ` +
     `If the user mentions tasks they need to do OR any scheduled meetings/events/appointments, ` +
-    `append this exact JSON at the very end of your response: ` +
-    `{"todos":["task1"],"events":[{"title":"Event title","datetime":"2026-05-29T14:00:00","participants":["name1"]}]}. ` +
+    `append this exact JSON at the very end of your response (no other text after it): ` +
+    `{"todos":["task1"],"events":[{"title":"Event title","participants":["name1"]}]}. ` +
+    `For events: if an exact time is known, add "datetime":"YYYY-MM-DDTHH:MM:SS" (ISO 8601). ` +
+    `If time is vague or not mentioned, omit datetime and add "general_timeframe":"morning"|"afternoon"|"evening"|"all_day" instead. ` +
+    `Never guess or hallucinate a time. ` +
+    `If mentioned, also include "location":"..." and "description":"...". ` +
     `Include only the arrays that have items (omit "todos" key if no tasks, omit "events" key if no events). ` +
     `Do not include this JSON if nothing was detected.`
   );

@@ -181,7 +181,7 @@ function CenterNode({ onPress, onDismissImage, hasCapturedImage, hasAnalysisResu
   const label = hasAnalysisResult
     ? 'SCAN RESULT'
     : hasCapturedImage
-    ? 'ATTACHED'
+    ? 'ANALYZE'
     : 'VISION ANALYSIS';
 
   return (

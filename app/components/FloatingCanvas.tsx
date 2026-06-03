@@ -194,12 +194,10 @@ function CenterNode({ onPress, onDismissImage, hasCapturedImage, hasAnalysisResu
         <Animated.View style={[StyleSheet.absoluteFill, styles.centerGlow, glowStyle]} />
         <View style={styles.centerContent}>
           {hasCapturedImage && capturedImageBase64 ? (
-            <Pressable onPress={onDismissImage} hitSlop={8}>
-              <Image
-                source={{ uri: `data:image/jpeg;base64,${capturedImageBase64}` }}
-                style={styles.capturedThumb}
-              />
-            </Pressable>
+            <Image
+              source={{ uri: `data:image/jpeg;base64,${capturedImageBase64}` }}
+              style={styles.capturedThumb}
+            />
           ) : (
             <View style={styles.centerDot} />
           )}

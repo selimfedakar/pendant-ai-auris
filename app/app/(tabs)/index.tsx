@@ -875,15 +875,15 @@ const styles = StyleSheet.create({
   // Thumbnail preview card
   thumbnailCard: {
     position: 'absolute',
-    bottom: 180,
+    bottom: 264,
     right: 20,
-    width: 72,
-    height: 72,
+    width: 60,
+    height: 60,
     zIndex: 50,
   },
   thumbnailImage: {
-    width: 72,
-    height: 72,
+    width: 60,
+    height: 60,
     borderRadius: 10,
     borderWidth: 1.5,
     borderColor: '#FFD700',

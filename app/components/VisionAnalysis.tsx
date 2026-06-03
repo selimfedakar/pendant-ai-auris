@@ -17,7 +17,7 @@ import Animated, {
 import { theme } from '@/constants/theme';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-const PANEL_HEIGHT = Math.round(SCREEN_HEIGHT * 0.25);
+const PANEL_HEIGHT = Math.round(SCREEN_HEIGHT * 0.42);
 
 interface VisionAnalysisProps {
   imageBase64: string | null;

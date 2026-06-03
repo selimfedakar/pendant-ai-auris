@@ -215,24 +215,24 @@ async function generateReply(
   return { reply, todos, events };
 }
 
-async function synthesizeSpeech(text: string, openaiApiKey: string): Promise<ArrayBuffer> {
-  const response = await fetch("https://api.openai.com/v1/audio/speech", {
+async function synthesizeSpeech(text: string, groqApiKey: string): Promise<ArrayBuffer> {
+  const response = await fetch("https://api.groq.com/openai/v1/audio/speech", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${openaiApiKey}`,
+      Authorization: `Bearer ${groqApiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "tts-1",
-      voice: "nova",
+      model: "canopylabs/orpheus-v1-english",
+      voice: "diana",
       input: text,
-      response_format: "mp3",
+      response_format: "wav",
     }),
   });
 
   if (!response.ok) {
     const err = await response.text();
-    throw new Error(`OpenAI TTS failed: ${response.status} — ${err}`);
+    throw new Error(`Groq TTS failed: ${response.status} — ${err}`);
   }
 
   return response.arrayBuffer();

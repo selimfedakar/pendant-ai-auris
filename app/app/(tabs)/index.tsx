@@ -146,6 +146,22 @@ export default function HomeScreen() {
     }
   }, [capturedImageBase64]);
 
+  // Thumbnail float animation
+  useEffect(() => {
+    if (capturedImageBase64) {
+      thumbFloatY.value = withRepeat(
+        withSequence(
+          withTiming(-6, { duration: 2800, easing: Easing.inOut(Easing.sin) }),
+          withTiming(6, { duration: 2800, easing: Easing.inOut(Easing.sin) }),
+        ),
+        -1,
+        false,
+      );
+    } else {
+      thumbFloatY.value = withTiming(0, { duration: 150 });
+    }
+  }, [capturedImageBase64]);
+
   const addMessage = (role: 'user' | 'auris', text: string) => {
     setMessages((prev) => [...prev, { id: `${Date.now()}-${role}`, role, text }]);
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 120);
@@ -363,10 +379,26 @@ export default function HomeScreen() {
   const handleVisionPress = useCallback(() => {
     if (visionPanel.analysis) {
       setVisionPanel((p) => ({ ...p, visible: true }));
-    } else {
-      handleCameraPress();
+      return;
     }
-  }, [visionPanel.analysis, handleCameraPress]);
+    if (capturedImageBase64) {
+      if (isProcessingRef.current || mode === 'social') return;
+      setAudioUnavailable(false);
+      calendarContextRef.current = undefined;
+      emailContextRef.current = undefined;
+      audioService.startRecording(stopAndProcess)
+        .then(() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+          setOrbState('listening');
+        })
+        .catch((err: any) => {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+          setError(err?.message ?? 'Could not start microphone');
+        });
+      return;
+    }
+    handleCameraPress();
+  }, [visionPanel.analysis, capturedImageBase64, mode, stopAndProcess, handleCameraPress]);
 
   const stopAndProcess = useCallback(async () => {
     if (isProcessingRef.current) return;
@@ -400,6 +432,18 @@ export default function HomeScreen() {
       console.log('[Auris] events:', JSON.stringify(events));
       console.log('[Auris] audioUri:', audioUri);
 
+      // Guard: in vision mode, reject ambient noise / social noise captures.
+      // If the transcript is 3 words or fewer AND the reply is very short (< 60 chars),
+      // the recording almost certainly captured silence or ambient noise — not a real question.
+      // Restore the photo so the user can try again.
+      if (imageSnapshot && transcript.split(/\s+/).filter(Boolean).length <= 3 && reply.length < 60) {
+        setCapturedImageBase64(imageSnapshot);
+        addMessage('auris', 'Speak a question about the image to start analysis.');
+        setOrbState('idle');
+        isProcessingRef.current = false;
+        return;
+      }
+
       if (transcript) addMessage('user', transcript);
       if (imageSnapshot && reply) {
         addMessage('auris', reply);
@@ -417,7 +461,7 @@ export default function HomeScreen() {
             })
           : Promise.resolve(),
         appendTodos(todos),
-        events.length > 0
+        events.length > 0 && !imageSnapshot
           ? (() => { setPendingCalendarAction(events[0]!); return Promise.resolve(); })()
           : Promise.resolve(),
       ]);
@@ -632,12 +676,18 @@ export default function HomeScreen() {
 
       {/* Orb */}
       <View style={styles.orbContainer}>
-        <AurisOrb state={orbState} onPress={handleOrbPress} onLongPress={handleOrbLongPress} />
+        <AurisOrb
+          state={orbState}
+          onPress={handleOrbPress}
+          onLongPress={handleOrbLongPress}
+          mode={mode}
+          onModeChange={(newMode) => { if (newMode !== mode) toggleMode(); }}
+        />
       </View>
 
       {/* Vision hint — pulses when image is captured and orb is idle */}
       <Animated.View style={[styles.visionHintRow, visionHintStyle]} pointerEvents="none">
-        <Text style={styles.visionHint}>AURIS EYE READY  ·  TAP ORB TO ANALYZE</Text>
+        <Text style={styles.visionHint}>PHOTO READY  ·  TAP ANALYZE OR ORB</Text>
       </Animated.View>
 
       {/* Audio unavailable badge */}
@@ -687,9 +737,9 @@ export default function HomeScreen() {
           />
           {capturedImageBase64 && <View style={styles.cameraBtnBadge} />}
         </Pressable>
-        <Text style={styles.cameraLabel}>
-          {capturedImageBase64 ? 'RETAKE' : 'CAPTURE'}
-        </Text>
+        {capturedImageBase64 && (
+          <Text style={styles.cameraLabel}>RETAKE</Text>
+        )}
       </View>
 
       {/* Thumbnail preview card */}

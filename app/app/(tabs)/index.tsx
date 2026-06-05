@@ -308,24 +308,35 @@ export default function HomeScreen() {
     return () => subscription.remove();
   }, [appendTodos, appendEvents]);
 
+  // Stable refs — always point to latest callbacks without causing effect re-runs
+  const addStreamingMessageRef = useRef(addStreamingMessage);
+  const addMessageRef = useRef(addMessage);
+  const appendTodosRef = useRef(appendTodos);
+  const appendEventsRef = useRef(appendEvents);
+  const profileRef = useRef(profile);
+  useEffect(() => { addStreamingMessageRef.current = addStreamingMessage; }, [addStreamingMessage]);
+  useEffect(() => { addMessageRef.current = addMessage; }, [addMessage]);
+  useEffect(() => { appendTodosRef.current = appendTodos; }, [appendTodos]);
+  useEffect(() => { appendEventsRef.current = appendEvents; }, [appendEvents]);
+  useEffect(() => { profileRef.current = profile; }, [profile]);
+
+  // Register callbacks ONCE on mount — reads from refs so always current
   useEffect(() => {
-    if (mode !== 'social') {
-      socialModeService.stop();
-      return;
-    }
     socialModeService.onSessionEnd(({ summary, durationMinutes, transcriptCount }) => {
       setMode('solo');
+      setOrbState('idle');
+      isProcessingRef.current = false;
       const msg = transcriptCount > 0
         ? `Social session ended (${durationMinutes} min, ${transcriptCount} segments). ${summary}`
-        : `Social session ended (${durationMinutes} min). Nothing significant was captured.`;
-      addStreamingMessage(msg);
+        : `Social session ended.`;
+      addStreamingMessageRef.current(msg);
     });
 
     socialModeService.onInsight(async ({ transcript: t, reply, todos, events }) => {
-      addMessage('auris', reply);
+      addMessageRef.current('auris', reply);
       notificationService.scheduleLocal('Auris', reply, { transcript: t, reply }).catch(() => {});
-      appendTodos(todos).catch(() => {});
-      appendEvents(events ?? []).catch(() => {});
+      appendTodosRef.current(todos).catch(() => {});
+      appendEventsRef.current(events ?? []).catch(() => {});
       historyService.append({
         id: Date.now().toString(),
         summary: reply.split(/[.!?]/)[0]?.trim() || 'Ambient Insight',
@@ -334,14 +345,29 @@ export default function HomeScreen() {
         ts: Date.now(),
       }).catch(() => {});
     });
+  }, []); // MOUNT ONLY — never re-runs
+
+  // Start/stop based only on mode — no profile/callback dependencies
+  useEffect(() => {
+    if (mode !== 'social') {
+      if (audioService.isRecording()) {
+        audioService.stopRecording().catch(() => {});
+      }
+      setOrbState('idle');
+      isProcessingRef.current = false;
+      return;
+    }
+    const p = profileRef.current;
     socialModeService.start(
       userIdRef.current,
-      profile.personality,
-      profile.name || undefined,
-      profile.profession || undefined,
+      p.personality,
+      p.name || undefined,
+      p.profession || undefined,
     );
-    return () => { socialModeService.stop(); };
-  }, [mode, profile.personality, profile.name, profile.profession, appendTodos, appendEvents]);
+    return () => {
+      socialModeService.stop();
+    };
+  }, [mode]); // ONLY mode
 
   const handleCameraPress = useCallback(async () => {
     if (!cameraPermission?.granted) {
@@ -735,7 +761,7 @@ export default function HomeScreen() {
         )}
         {orbState === 'idle' && activeModule === 'calendar' && (
           <Text style={[styles.hint, { color: '#10B981' }]}>
-            {audioService.isRecording() ? 'tap to send' : 'schedule-aware · tap to talk'}
+            {audioService.isRecording() ? 'tap to send' : 'schedule-aware'}
           </Text>
         )}
         {orbState === 'listening' && (

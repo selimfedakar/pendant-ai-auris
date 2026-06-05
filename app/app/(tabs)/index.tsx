@@ -13,6 +13,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system/legacy';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Google from 'expo-auth-session/providers/google';
 import * as WebBrowser from 'expo-web-browser';
@@ -225,12 +226,15 @@ export default function HomeScreen() {
     setPendingCalendarAction(null);
     try {
       await calendarService.syncWithCalendar(confirmed);
-      await appendEvents([{ title: confirmed.title, datetime: confirmed.startDate.toISOString(), participants: [], location: confirmed.location }]);
+      await Promise.all([
+        appendEvents([{ title: confirmed.title, datetime: confirmed.startDate.toISOString(), participants: [], location: confirmed.location }]),
+        appendTodos([confirmed.title]),
+      ]);
       addMessage('auris', `Added to your calendar: ${confirmed.title}`);
     } catch (e) {
       addMessage('auris', 'Could not add to calendar. Please check calendar permissions.');
     }
-  }, [appendEvents, addMessage]);
+  }, [appendEvents, appendTodos, addMessage]);
 
   const handleCalendarCancel = useCallback(() => {
     setPendingCalendarAction(null);
@@ -309,9 +313,12 @@ export default function HomeScreen() {
       socialModeService.stop();
       return;
     }
-    socialModeService.onSessionEnd(({ summary, durationMinutes }) => {
+    socialModeService.onSessionEnd(({ summary, durationMinutes, transcriptCount }) => {
       setMode('solo');
-      addStreamingMessage(`Ambient session complete (${durationMinutes} min). ${summary}`);
+      const msg = transcriptCount > 0
+        ? `Social session ended (${durationMinutes} min, ${transcriptCount} segments). ${summary}`
+        : `Social session ended (${durationMinutes} min). Nothing significant was captured.`;
+      addStreamingMessage(msg);
     });
 
     socialModeService.onInsight(async ({ transcript: t, reply, todos, events }) => {
@@ -409,6 +416,16 @@ export default function HomeScreen() {
     try {
       setOrbState(imageSnapshot ? 'analyzing' : 'processing');
       const uri = await audioService.stopRecording();
+
+      // Catch near-empty files before they reach the backend (CoreAudio startup failure).
+      const fileInfo = await FileSystem.getInfoAsync(uri, { size: true });
+      if ((fileInfo as any).size < 2000) {
+        setOrbState('idle');
+        isProcessingRef.current = false;
+        if (imageSnapshot) setCapturedImageBase64(imageSnapshot);
+        addMessage('auris', 'Recording too short — tap and speak clearly.');
+        return;
+      }
 
       const result = await backendService.processMultiModal({
         audioUri: uri,
@@ -613,9 +630,9 @@ export default function HomeScreen() {
 
   const toggleMode = async () => {
     if (mode === 'social') {
-      await socialModeService.stop();
+      // stopWithSummary generates a session summary before stopping
+      await socialModeService.stopWithSummary();
       setMode('solo');
-      addStreamingMessage('Solo mode active. I\'m ready to talk whenever you are.');
       return;
     }
     if (audioService.isRecording()) return;
@@ -698,6 +715,17 @@ export default function HomeScreen() {
         </Pressable>
       )}
 
+      {/* Social mode stop button — shown above orb when social is active */}
+      {mode === 'social' && (
+        <Pressable
+          style={({ pressed }) => [styles.socialStopBtn, pressed && { opacity: 0.75 }]}
+          onPress={toggleMode}
+        >
+          <View style={styles.socialStopDot} />
+          <Text style={styles.socialStopLabel}>SOCIAL ACTIVE  ·  TAP TO END &amp; SUMMARIZE</Text>
+        </Pressable>
+      )}
+
       {/* Orb hint */}
       <View style={styles.hintRow}>
         {orbState === 'idle' && activeModule === 'email' && (
@@ -708,11 +736,6 @@ export default function HomeScreen() {
         {orbState === 'idle' && activeModule === 'calendar' && (
           <Text style={[styles.hint, { color: '#10B981' }]}>
             {audioService.isRecording() ? 'tap to send' : 'schedule-aware · tap to talk'}
-          </Text>
-        )}
-        {orbState === 'idle' && !capturedImageBase64 && activeModule !== 'email' && activeModule !== 'calendar' && (
-          <Text style={styles.hint}>
-            {audioService.isRecording() ? 'tap to send' : 'tap to talk'}
           </Text>
         )}
         {orbState === 'listening' && (
@@ -883,6 +906,30 @@ const styles = StyleSheet.create({
     backgroundColor: '#88888815', borderRadius: 8, borderWidth: 0.5, borderColor: '#88888830',
   },
   audioUnavailableText: { color: '#888', fontSize: 10, letterSpacing: 0.5 },
+  socialStopBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#4A9EFF18',
+    borderWidth: 1,
+    borderColor: '#4A9EFF50',
+    marginBottom: 10,
+  },
+  socialStopDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#4A9EFF',
+  },
+  socialStopLabel: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: '#4A9EFF',
+    letterSpacing: 1.2,
+  },
   hintRow: { alignItems: 'center', paddingBottom: 10, minHeight: 20 },
   hint: { color: theme.colors.textSecondary, fontSize: 12, letterSpacing: 1.2, fontWeight: '500' },
   // Camera button

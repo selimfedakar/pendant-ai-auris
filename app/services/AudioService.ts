@@ -11,6 +11,9 @@ import { RECORDING_STATUS_UPDATE, PLAYBACK_STATUS_UPDATE } from 'expo-audio/buil
 
 const VAD_SILENCE_DB = -45;
 const VAD_SILENCE_MS = 1500;
+// Minimum recording duration before VAD auto-stop is allowed.
+// Prevents near-empty files when CoreAudio session needs time to stabilise.
+const VAD_MIN_RECORD_MS = 2000;
 
 // WAV (Linear PCM) is the most reliably supported format by Groq STT.
 // MPEG4AAC (.m4a) can produce malformed containers on iOS simulator.
@@ -42,6 +45,7 @@ class AudioService {
   private onVadStop: (() => void) | null = null;
   private vadSubscription: { remove: () => void } | null = null;
   private meteringCallback: ((db: number) => void) | null = null;
+  private recordingStartTime = 0;
 
   setMeteringCallback(cb: ((db: number) => void) | null): void {
     this.meteringCallback = cb;
@@ -70,6 +74,14 @@ class AudioService {
 
     this.onVadStop = onVadStop ?? null;
 
+    // Release any stale CoreAudio session before acquiring a new one.
+    // Without this, error 35 (EAGAIN) occurs when the previous session
+    // hasn't fully torn down, producing a 0-byte recording.
+    try {
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true, interruptionMode: 'mixWithOthers' });
+    } catch { /* ignore */ }
+    await new Promise(r => setTimeout(r, 200));
+
     await setAudioModeAsync({
       allowsRecording: true,
       playsInSilentMode: true,
@@ -83,7 +95,8 @@ class AudioService {
       const db: number = status.metering ?? 0;
       this.meteringCallback?.(db);
       if (db < VAD_SILENCE_DB) {
-        if (!this.vadTimer) {
+        const elapsed = Date.now() - this.recordingStartTime;
+        if (!this.vadTimer && elapsed >= VAD_MIN_RECORD_MS) {
           this.vadTimer = setTimeout(() => {
             this.vadTimer = null;
             this.onVadStop?.();
@@ -106,6 +119,7 @@ class AudioService {
       await recorder.prepareToRecordAsync();
     }
     recorder.record();
+    this.recordingStartTime = Date.now();
     this.recorder = recorder;
   }
 

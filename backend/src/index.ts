@@ -73,19 +73,21 @@ async function saveHistory(kv: KVNamespace | undefined, userId: string, messages
   }
 }
 
-async function transcribeAudio(audioBlob: Blob, groqApiKey: string): Promise<string> {
+async function transcribeAudio(
+  audioBlob: Blob,
+  groqApiKey: string,
+): Promise<{ text: string; language: string }> {
   // Guard: reject blobs too small to contain valid audio (corrupted or silent recording).
   if (audioBlob.size < 1000) {
     throw new Error(`Audio too short (${audioBlob.size} bytes) — please speak for at least 1 second`);
   }
 
   // Use 3-arg FormData.append so the part carries Content-Disposition: filename="audio.wav".
-  // Groq uses the file extension to determine the codec. WAV (Linear PCM) avoids M4A container
-  // issues that occur on iOS simulator. Do NOT use new File([blob], ...) — unreliable in edge runtimes.
+  // verbose_json gives us detected language alongside the transcript.
   const formData = new FormData();
   formData.append("file", audioBlob, "audio.wav");
   formData.append("model", "whisper-large-v3-turbo");
-  formData.append("response_format", "json");
+  formData.append("response_format", "verbose_json");
 
   const response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
     method: "POST",
@@ -98,8 +100,8 @@ async function transcribeAudio(audioBlob: Blob, groqApiKey: string): Promise<str
     throw new Error(`Groq STT failed (${response.status}): ${errText}`);
   }
 
-  const data = (await response.json()) as { text: string };
-  return data.text.trim();
+  const data = (await response.json()) as { text: string; language?: string };
+  return { text: data.text.trim(), language: data.language ?? "en" };
 }
 
 type DetectedEvent = {
@@ -215,7 +217,8 @@ async function generateReply(
   return { reply, todos, events };
 }
 
-async function synthesizeSpeech(text: string, groqApiKey: string): Promise<ArrayBuffer> {
+// Orpheus (English only, high quality) — default for English
+async function synthesizeSpeechOrpheus(text: string, groqApiKey: string): Promise<ArrayBuffer> {
   const response = await fetch("https://api.groq.com/openai/v1/audio/speech", {
     method: "POST",
     headers: {
@@ -229,13 +232,45 @@ async function synthesizeSpeech(text: string, groqApiKey: string): Promise<Array
       response_format: "wav",
     }),
   });
-
   if (!response.ok) {
     const err = await response.text();
     throw new Error(`Groq TTS failed: ${response.status} — ${err}`);
   }
-
   return response.arrayBuffer();
+}
+
+// OpenAI Nova — multilingual fallback for non-English
+async function synthesizeSpeechOpenAI(text: string, openaiApiKey: string): Promise<ArrayBuffer> {
+  const response = await fetch("https://api.openai.com/v1/audio/speech", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${openaiApiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "tts-1",
+      voice: "nova",
+      input: text,
+    }),
+  });
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`OpenAI TTS failed: ${response.status} — ${err}`);
+  }
+  return response.arrayBuffer();
+}
+
+// Route TTS: Orpheus for English, OpenAI Nova for all other languages
+async function synthesizeSpeech(
+  text: string,
+  groqApiKey: string,
+  openaiApiKey: string,
+  language: string = "en",
+): Promise<ArrayBuffer> {
+  if (language === "en") {
+    return synthesizeSpeechOrpheus(text, groqApiKey);
+  }
+  return synthesizeSpeechOpenAI(text, openaiApiKey);
 }
 
 async function collectClaudeStream(body: ReadableStream<Uint8Array>): Promise<string> {
@@ -344,10 +379,12 @@ app.post("/v1/process-audio-json", async (c) => {
   try {
     const audioBlob = base64ToBlob(audioBase64, "audio/wav");
 
-    const [transcript, history] = await Promise.all([
+    const [sttResult, history] = await Promise.all([
       transcribeAudio(audioBlob, c.env.GROQ_API_KEY),
       loadHistory(c.env.CONVERSATIONS, userId),
     ]);
+    const transcript = sttResult.text;
+    const language = sttResult.language;
 
     if (!transcript) return c.json({ error: "No speech detected in audio" }, 422);
 
@@ -371,7 +408,7 @@ app.post("/v1/process-audio-json", async (c) => {
     let audioBuffer: ArrayBuffer = new ArrayBuffer(0);
     let ttsSkipped = false;
     try {
-      audioBuffer = await synthesizeSpeech(reply, c.env.GROQ_API_KEY);
+      audioBuffer = await synthesizeSpeech(reply, c.env.GROQ_API_KEY, c.env.OPENAI_API_KEY, language);
     } catch (ttsErr) {
       console.error("TTS failed (non-fatal):", ttsErr instanceof Error ? ttsErr.message : ttsErr);
       ttsSkipped = true;
@@ -417,10 +454,12 @@ app.post("/v1/process-audio-stream-json", async (c) => {
   try {
     const audioBlob = base64ToBlob(audioBase64, "audio/wav");
 
-    const [transcript, history] = await Promise.all([
+    const [sttResult2, history] = await Promise.all([
       transcribeAudio(audioBlob, c.env.GROQ_API_KEY),
       loadHistory(c.env.CONVERSATIONS, userId),
     ]);
+    const transcript = sttResult2.text;
+    const language = sttResult2.language;
 
     if (!transcript) return c.json({ error: "No speech detected in audio" }, 422);
 
@@ -466,8 +505,9 @@ app.post("/v1/process-audio-stream-json", async (c) => {
 
     const sentences = splitIntoSentences(reply).filter((s) => s.length > 0);
     const groqApiKey = c.env.GROQ_API_KEY;
+    const openaiApiKey2 = c.env.OPENAI_API_KEY;
     const ttsPromises: Promise<ArrayBuffer | null>[] = sentences.map((sentence) =>
-      synthesizeSpeech(sentence, groqApiKey).catch((err) => {
+      synthesizeSpeech(sentence, groqApiKey, openaiApiKey2, language).catch((err) => {
         console.error("TTS sentence failed:", err instanceof Error ? err.message : err);
         return null;
       })
@@ -619,10 +659,12 @@ app.post("/v1/process-audio-raw", async (c) => {
   try {
     const audioBlob = new Blob([rawBody], { type: "audio/wav" });
 
-    const [transcript, history] = await Promise.all([
+    const [sttResult3, history] = await Promise.all([
       transcribeAudio(audioBlob, c.env.GROQ_API_KEY),
       loadHistory(c.env.CONVERSATIONS, userId),
     ]);
+    const transcript = sttResult3.text;
+    const language = sttResult3.language;
 
     if (!transcript) return c.json({ error: "No speech detected in audio" }, 422);
 
@@ -644,7 +686,7 @@ app.post("/v1/process-audio-raw", async (c) => {
     let audioBuffer: ArrayBuffer = new ArrayBuffer(0);
     let ttsSkipped = false;
     try {
-      audioBuffer = await synthesizeSpeech(reply, c.env.GROQ_API_KEY);
+      audioBuffer = await synthesizeSpeech(reply, c.env.GROQ_API_KEY, c.env.OPENAI_API_KEY, language);
     } catch (ttsErr) {
       console.error("TTS failed (non-fatal):", ttsErr instanceof Error ? ttsErr.message : ttsErr);
       ttsSkipped = true;
@@ -695,10 +737,12 @@ app.post("/v1/process-audio-stream", async (c) => {
       type: audioFile.type || "audio/mp4",
     });
 
-    const [transcript, history] = await Promise.all([
+    const [sttResult4, history] = await Promise.all([
       transcribeAudio(audioBlob, c.env.GROQ_API_KEY),
       loadHistory(c.env.CONVERSATIONS, userId),
     ]);
+    const transcript = sttResult4.text;
+    const language = sttResult4.language;
 
     if (!transcript) {
       return c.json({ error: "No speech detected in audio" }, 422);
@@ -745,8 +789,9 @@ app.post("/v1/process-audio-stream", async (c) => {
 
     const sentences = splitIntoSentences(reply).filter((s) => s.length > 0);
     const groqApiKey = c.env.GROQ_API_KEY;
+    const openaiApiKey4 = c.env.OPENAI_API_KEY;
     const ttsPromises: Promise<ArrayBuffer | null>[] = sentences.map((sentence) =>
-      synthesizeSpeech(sentence, groqApiKey).catch((err) => {
+      synthesizeSpeech(sentence, groqApiKey, openaiApiKey4, language).catch((err) => {
         console.error("TTS sentence failed:", err instanceof Error ? err.message : err);
         return null;
       })
@@ -811,10 +856,12 @@ app.post("/v1/process-audio", async (c) => {
       type: audioFile2.type || "audio/mp4",
     });
 
-    const [transcript, history] = await Promise.all([
+    const [sttResult5, history] = await Promise.all([
       transcribeAudio(audioBlob, c.env.GROQ_API_KEY),
       loadHistory(c.env.CONVERSATIONS, userId),
     ]);
+    const transcript = sttResult5.text;
+    const language = sttResult5.language;
 
     if (!transcript) {
       return c.json({ error: "No speech detected in audio" }, 422);
@@ -837,7 +884,7 @@ app.post("/v1/process-audio", async (c) => {
     ];
     await saveHistory(c.env.CONVERSATIONS, userId, updatedHistory);
 
-    const audioBuffer = await synthesizeSpeech(reply, c.env.GROQ_API_KEY);
+    const audioBuffer = await synthesizeSpeech(reply, c.env.GROQ_API_KEY, c.env.OPENAI_API_KEY, language);
 
     return new Response(audioBuffer, {
       status: 200,

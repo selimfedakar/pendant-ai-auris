@@ -26,6 +26,16 @@ const TEXT_PRIMARY = '#F0F0F0';
 const TEXT_SECONDARY = '#888888';
 const CYAN = '#00E5FF';
 
+// Maps general_timeframe to a default HH:MM start time
+function timeframeToHHMM(tf: string | undefined): string {
+  switch (tf) {
+    case 'morning': return '09:00';
+    case 'afternoon': return '14:00';
+    case 'evening': return '18:00';
+    default: return '09:00';
+  }
+}
+
 type Props = {
   visible: boolean;
   event: {
@@ -60,10 +70,7 @@ function deriveTimeString(event: Props['event']): string | null {
   if (!event) return null;
   if (event.datetime) {
     const timePart = event.datetime.split('T')[1];
-    if (timePart) {
-      // Return HH:MM
-      return timePart.slice(0, 5);
-    }
+    if (timePart) return timePart.slice(0, 5);
   }
   return null;
 }
@@ -77,25 +84,16 @@ function hasSpecificTime(event: Props['event']): boolean {
   return false;
 }
 
-function timeframeLabel(tf: string | undefined): string {
-  if (!tf) return 'ALL DAY';
-  switch (tf) {
-    case 'morning': return 'MORNING';
-    case 'afternoon': return 'AFTERNOON';
-    case 'evening': return 'EVENING';
-    case 'all_day': return 'ALL DAY';
-    default: return tf.toUpperCase();
-  }
-}
-
 export function CalendarConfirmationCard({ visible, event, onConfirm, onCancel }: Props) {
   const translateY = useSharedValue(SCREEN_HEIGHT);
 
   const [title, setTitle] = useState('');
   const [location, setLocation] = useState('');
   const [isAllDay, setIsAllDay] = useState(true);
+  const [timeInput, setTimeInput] = useState('09:00');
   const [titleFocused, setTitleFocused] = useState(false);
   const [locationFocused, setLocationFocused] = useState(false);
+  const [timeFocused, setTimeFocused] = useState(false);
 
   // Sync state from incoming event prop whenever card becomes visible
   useEffect(() => {
@@ -104,6 +102,11 @@ export function CalendarConfirmationCard({ visible, event, onConfirm, onCancel }
       setLocation(event.location ?? '');
       const specificTime = hasSpecificTime(event);
       setIsAllDay(!specificTime);
+      if (specificTime) {
+        setTimeInput(deriveTimeString(event) ?? '09:00');
+      } else {
+        setTimeInput(timeframeToHHMM(event.general_timeframe));
+      }
     }
   }, [visible, event]);
 
@@ -123,8 +126,6 @@ export function CalendarConfirmationCard({ visible, event, onConfirm, onCancel }
   if (!visible && !event) return null;
 
   const dateStr = deriveDateString(event);
-  const timeStr = deriveTimeString(event);
-  const showTimeDisplay = !isAllDay && timeStr;
 
   const handleConfirm = () => {
     const now = new Date();
@@ -132,7 +133,6 @@ export function CalendarConfirmationCard({ visible, event, onConfirm, onCancel }
     let endDate: Date;
 
     if (dateStr) {
-      // Parse YYYY-MM-DD safely (avoid timezone shift from new Date('YYYY-MM-DD'))
       const [year, month, day] = dateStr.split('-').map(Number);
       startDate = new Date(year, (month ?? 1) - 1, day ?? 1);
       endDate = new Date(year, (month ?? 1) - 1, day ?? 1);
@@ -144,13 +144,12 @@ export function CalendarConfirmationCard({ visible, event, onConfirm, onCancel }
     if (isAllDay) {
       startDate.setHours(0, 0, 0, 0);
       endDate.setHours(23, 59, 0, 0);
-    } else if (timeStr) {
-      const [h, m] = timeStr.split(':').map(Number);
-      startDate.setHours(h ?? 8, m ?? 0, 0, 0);
-      endDate.setHours((h ?? 8) + 1, m ?? 0, 0, 0);
     } else {
-      startDate.setHours(8, 0, 0, 0);
-      endDate.setHours(9, 0, 0, 0);
+      const parts = timeInput.split(':');
+      const h = parseInt(parts[0] ?? '9', 10) || 9;
+      const m = parseInt(parts[1] ?? '0', 10) || 0;
+      startDate.setHours(h, m, 0, 0);
+      endDate.setHours(h + 1, m, 0, 0);
     }
 
     onConfirm({
@@ -165,9 +164,6 @@ export function CalendarConfirmationCard({ visible, event, onConfirm, onCancel }
 
   return (
     <Animated.View style={[styles.container, animatedStyle]} pointerEvents="box-none">
-      {/* Gold scan line at top */}
-      <View style={styles.scanLine} />
-
       {/* Header */}
       <View style={styles.header}>
         <Ionicons name="calendar-outline" size={15} color={GOLD} />
@@ -204,20 +200,29 @@ export function CalendarConfirmationCard({ visible, event, onConfirm, onCancel }
       <View style={styles.fieldRow}>
         <Text style={styles.fieldLabel}>TIME</Text>
         <View style={styles.timeRow}>
-          {showTimeDisplay ? (
-            <View style={styles.readonlyChip}>
-              <Ionicons name="time-outline" size={12} color={CYAN} style={{ marginRight: 6 }} />
-              <Text style={styles.readonlyChipText}>{timeStr}</Text>
-            </View>
-          ) : (
+          {isAllDay ? (
             <View style={styles.readonlyChip}>
               <Ionicons name="sunny-outline" size={12} color={CYAN} style={{ marginRight: 6 }} />
-              <Text style={styles.readonlyChipText}>
-                {event?.general_timeframe
-                  ? timeframeLabel(event.general_timeframe)
-                  : 'ALL DAY'}
-              </Text>
+              <Text style={styles.readonlyChipText}>ALL DAY</Text>
             </View>
+          ) : (
+            <TextInput
+              style={[styles.timeInput, timeFocused && styles.timeInputFocused]}
+              value={timeInput}
+              onChangeText={(v) => {
+                // Allow only digits and colon, max 5 chars (HH:MM)
+                const cleaned = v.replace(/[^0-9:]/g, '').slice(0, 5);
+                setTimeInput(cleaned);
+              }}
+              onFocus={() => setTimeFocused(true)}
+              onBlur={() => setTimeFocused(false)}
+              placeholder="HH:MM"
+              placeholderTextColor={TEXT_SECONDARY}
+              keyboardType="numbers-and-punctuation"
+              selectionColor={CYAN}
+              returnKeyType="done"
+              maxLength={5}
+            />
           )}
           <View style={styles.allDayToggleRow}>
             <Text style={styles.allDayLabel}>ALL DAY</Text>
@@ -279,7 +284,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 20,
     paddingHorizontal: 20,
     paddingBottom: 36,
-    paddingTop: 0,
+    paddingTop: 20,
     zIndex: 200,
     shadowColor: GOLD,
     shadowOffset: { width: 0, height: -4 },
@@ -288,13 +293,6 @@ const styles = StyleSheet.create({
     elevation: 20,
     borderWidth: 0.5,
     borderColor: `${GOLD}40`,
-  },
-  scanLine: {
-    height: 1.5,
-    backgroundColor: GOLD,
-    borderRadius: 1,
-    marginBottom: 16,
-    opacity: 0.85,
   },
   header: {
     flexDirection: 'row',
@@ -353,6 +351,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  timeInput: {
+    backgroundColor: SURFACE,
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    fontSize: 15,
+    fontWeight: '600',
+    color: CYAN,
+    minWidth: 80,
+    letterSpacing: 1,
+  },
+  timeInputFocused: {
+    borderColor: CYAN,
   },
   allDayToggleRow: {
     flexDirection: 'row',

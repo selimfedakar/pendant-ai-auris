@@ -71,6 +71,20 @@ class SocialModeService {
     await this.startCycle();
   }
 
+  // Stops social mode and generates an immediate session summary.
+  async stopWithSummary(): Promise<void> {
+    if (!this.active) return;
+    if (this.sessionTimer) {
+      clearTimeout(this.sessionTimer);
+      this.sessionTimer = null;
+    }
+    if (audioService.isRecording()) {
+      try { await audioService.stopRecording(); } catch { /* ignore */ }
+    }
+    // endSession clears this.active and fires sessionEndCallback
+    await this.endSession();
+  }
+
   async stop(): Promise<void> {
     if (!this.active) return;
     this.active = false;
@@ -96,7 +110,15 @@ class SocialModeService {
       try { await audioService.stopRecording(); } catch { /* ignore */ }
     }
 
-    if (!wasActive || !this.sessionTranscripts.length) return;
+    if (!wasActive || !this.sessionTranscripts.length) {
+      // Fire callback even with no content so UI can update
+      this.sessionEndCallback?.({
+        summary: 'Social session ended. No conversations were captured.',
+        durationMinutes: Math.round((Date.now() - this.sessionStartTime) / 60000),
+        transcriptCount: 0,
+      });
+      return;
+    }
 
     const durationMinutes = Math.round((Date.now() - this.sessionStartTime) / 60000);
     const context = this.sessionTranscripts.join('\n');
@@ -110,7 +132,7 @@ class SocialModeService {
       );
     } catch (err) {
       console.error('[SocialMode] summarizeSession failed:', err);
-      summary = `Ambient session complete. ${this.sessionTranscripts.length} conversation segments captured.`;
+      summary = `Session complete (${durationMinutes} min, ${this.sessionTranscripts.length} segments captured).`;
     }
 
     const payload: SessionEndPayload = {
@@ -162,12 +184,15 @@ class SocialModeService {
         this.sessionTranscripts.push(result.transcript);
       }
 
-      this.insightCallback?.({
-        transcript: result.transcript,
-        reply: result.reply,
-        todos: result.todos,
-        events: result.events ?? [],
-      });
+      // Only surface insight when there is meaningful content
+      if (result.reply && result.reply.trim().length > 0) {
+        this.insightCallback?.({
+          transcript: result.transcript,
+          reply: result.reply,
+          todos: result.todos,
+          events: result.events ?? [],
+        });
+      }
     } catch (err) {
       console.error('[SocialMode] processAudioStreaming failed:', err);
     }

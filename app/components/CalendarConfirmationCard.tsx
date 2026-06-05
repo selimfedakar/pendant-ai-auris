@@ -36,6 +36,13 @@ function timeframeToHHMM(tf: string | undefined): string {
   }
 }
 
+function currentTimeRounded(): string {
+  const now = new Date();
+  const h = now.getHours();
+  const m = now.getMinutes() < 30 ? 0 : 30;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
 type Props = {
   visible: boolean;
   event: {
@@ -89,24 +96,27 @@ export function CalendarConfirmationCard({ visible, event, onConfirm, onCancel }
 
   const [title, setTitle] = useState('');
   const [location, setLocation] = useState('');
-  const [isAllDay, setIsAllDay] = useState(true);
-  const [timeInput, setTimeInput] = useState('09:00');
+  const [isAllDay, setIsAllDay] = useState<boolean>(() => {
+    if (!event) return true;
+    return !hasSpecificTime(event);
+  });
+  const [timeInput, setTimeInput] = useState<string>(() => {
+    if (!event) return '09:00';
+    if (hasSpecificTime(event)) return deriveTimeString(event) ?? '09:00';
+    return timeframeToHHMM(event.general_timeframe);
+  });
   const [titleFocused, setTitleFocused] = useState(false);
   const [locationFocused, setLocationFocused] = useState(false);
   const [timeFocused, setTimeFocused] = useState(false);
 
-  // Sync state from incoming event prop whenever card becomes visible
+  // Sync state from incoming event prop whenever card becomes visible or event changes
   useEffect(() => {
     if (visible && event) {
       setTitle(event.title ?? '');
       setLocation(event.location ?? '');
       const specificTime = hasSpecificTime(event);
       setIsAllDay(!specificTime);
-      if (specificTime) {
-        setTimeInput(deriveTimeString(event) ?? '09:00');
-      } else {
-        setTimeInput(timeframeToHHMM(event.general_timeframe));
-      }
+      setTimeInput(specificTime ? (deriveTimeString(event) ?? '09:00') : timeframeToHHMM(event.general_timeframe));
     }
   }, [visible, event]);
 
@@ -228,7 +238,12 @@ export function CalendarConfirmationCard({ visible, event, onConfirm, onCancel }
             <Text style={styles.allDayLabel}>ALL DAY</Text>
             <Switch
               value={isAllDay}
-              onValueChange={setIsAllDay}
+              onValueChange={(val) => {
+                setIsAllDay(val);
+                if (!val && timeInput === '09:00') {
+                  setTimeInput(currentTimeRounded());
+                }
+              }}
               trackColor={{ false: BORDER, true: `${GOLD}80` }}
               thumbColor={isAllDay ? GOLD_BRIGHT : '#555'}
               ios_backgroundColor={BORDER}

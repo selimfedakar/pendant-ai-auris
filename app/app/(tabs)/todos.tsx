@@ -7,6 +7,7 @@ import {
   Pressable,
   SectionList,
   Alert,
+  ActionSheetIOS,
   KeyboardAvoidingView,
   Platform,
   Keyboard,
@@ -108,11 +109,13 @@ function TodoRow({
   onToggle,
   onDelete,
   onSync,
+  onEdit,
 }: {
   todo: Todo;
   onToggle: (id: string) => void;
   onDelete: (id: string) => void;
   onSync: (id: string) => void;
+  onEdit: (id: string) => void;
 }) {
   const translateX = useSharedValue(0);
   const opacity = useSharedValue(1);
@@ -171,13 +174,14 @@ function TodoRow({
             </Text>
           </View>
 
+          {!todo.done && (
+            <Pressable style={styles.editBtn} onPress={() => onEdit(todo.id)} hitSlop={10}>
+              <Ionicons name="pencil-outline" size={14} color={theme.colors.textTertiary} />
+            </Pressable>
+          )}
           {/* Calendar sync button — only for Auris-detected, not yet synced */}
           {isAI && !todo.done && !todo.calendarSynced && (
-            <Pressable
-              style={styles.calSyncBtn}
-              onPress={() => onSync(todo.id)}
-              hitSlop={10}
-            >
+            <Pressable style={styles.calSyncBtn} onPress={() => onSync(todo.id)} hitSlop={10}>
               <Ionicons name="calendar-outline" size={16} color={CYAN} />
             </Pressable>
           )}
@@ -210,11 +214,13 @@ function EventRow({
   onToggle,
   onDelete,
   onSync,
+  onEdit,
 }: {
   event: ScheduledEvent;
   onToggle: (id: string) => void;
   onDelete: (id: string) => void;
   onSync: (id: string) => void;
+  onEdit: (id: string) => void;
 }) {
   const translateX = useSharedValue(0);
   const opacity = useSharedValue(1);
@@ -277,13 +283,14 @@ function EventRow({
             </Text>
           </View>
 
+          {!event.done && (
+            <Pressable style={styles.editBtn} onPress={() => onEdit(event.id)} hitSlop={10}>
+              <Ionicons name="pencil-outline" size={14} color={theme.colors.textTertiary} />
+            </Pressable>
+          )}
           {/* Sync to iOS Calendar button */}
           {!event.done && !event.calendarSynced && (
-            <Pressable
-              style={styles.calSyncBtn}
-              onPress={() => onSync(event.id)}
-              hitSlop={10}
-            >
+            <Pressable style={styles.calSyncBtn} onPress={() => onSync(event.id)} hitSlop={10}>
               <Ionicons name="calendar-outline" size={16} color={CYAN} />
             </Pressable>
           )}
@@ -359,6 +366,82 @@ export default function TodosScreen() {
   const deleteEvent = (id: string) => {
     persistEvents(events.filter((e) => e.id !== id));
   };
+
+  const handleEditTodo = useCallback((id: string) => {
+    const todo = todos.find((t) => t.id === id);
+    if (!todo) return;
+    Alert.prompt(
+      'Edit Task',
+      undefined,
+      (newText) => {
+        const trimmed = (newText ?? '').trim();
+        if (trimmed && trimmed !== todo.text) {
+          persist(todos.map((t) => t.id === id ? { ...t, text: trimmed } : t));
+        }
+      },
+      'plain-text',
+      todo.text,
+    );
+  }, [todos, persist]);
+
+  const handleEditEvent = useCallback((id: string) => {
+    const event = events.find((e) => e.id === id);
+    if (!event) return;
+
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        title: event.title,
+        options: ['Cancel', 'Edit Title', 'Reschedule'],
+        cancelButtonIndex: 0,
+      },
+      (buttonIndex) => {
+        if (buttonIndex === 1) {
+          Alert.prompt(
+            'Edit Title',
+            undefined,
+            (newTitle) => {
+              const trimmed = (newTitle ?? '').trim();
+              if (trimmed && trimmed !== event.title) {
+                persistEvents(events.map((e) => e.id === id ? { ...e, title: trimmed } : e));
+              }
+            },
+            'plain-text',
+            event.title,
+          );
+        } else if (buttonIndex === 2) {
+          ActionSheetIOS.showActionSheetWithOptions(
+            {
+              title: 'Reschedule to…',
+              options: ['Cancel', 'Morning (9:00)', 'Afternoon (14:00)', 'Evening (18:00)', 'All Day — Today', 'All Day — Tomorrow'],
+              cancelButtonIndex: 0,
+            },
+            (slotIndex) => {
+              if (slotIndex === 0) return;
+              const base = new Date(event.datetime);
+              const today = new Date();
+              const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+
+              let newDate: Date;
+              let allDay = false;
+
+              if (slotIndex === 1) { newDate = new Date(base); newDate.setHours(9, 0, 0, 0); }
+              else if (slotIndex === 2) { newDate = new Date(base); newDate.setHours(14, 0, 0, 0); }
+              else if (slotIndex === 3) { newDate = new Date(base); newDate.setHours(18, 0, 0, 0); }
+              else if (slotIndex === 4) { newDate = new Date(today); newDate.setHours(0, 0, 0, 0); allDay = true; }
+              else { newDate = new Date(tomorrow); newDate.setHours(0, 0, 0, 0); allDay = true; }
+
+              persistEvents(events.map((e) =>
+                e.id === id
+                  ? { ...e, datetime: newDate.toISOString(), calendarSynced: false }
+                  : e,
+              ));
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+            },
+          );
+        }
+      },
+    );
+  }, [events, persistEvents]);
 
   const handleSyncTodo = useCallback((id: string) => {
     const todo = todos.find((t) => t.id === id);
@@ -494,6 +577,7 @@ export default function TodosScreen() {
                 onToggle={toggleEvent}
                 onDelete={deleteEvent}
                 onSync={handleSyncEvent}
+                onEdit={handleEditEvent}
               />
             );
           }
@@ -504,6 +588,7 @@ export default function TodosScreen() {
                 onToggle={toggleEvent}
                 onDelete={deleteEvent}
                 onSync={handleSyncEvent}
+                onEdit={handleEditEvent}
               />
             );
           }
@@ -513,6 +598,7 @@ export default function TodosScreen() {
               onToggle={toggleTodo}
               onDelete={deleteTodo}
               onSync={handleSyncTodo}
+              onEdit={handleEditTodo}
             />
           );
         }}

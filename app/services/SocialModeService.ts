@@ -193,6 +193,14 @@ class SocialModeService {
           events: result.events ?? [],
         });
       }
+
+      // Keyword-triggered summary: user asked for a recap mid-session
+      const SUMMARY_KEYWORDS = ['özet', 'ozet', 'summary', 'summarize', 'özetle', 'ne konuştuk', 'what did we discuss'];
+      const transcriptLower = (result.transcript ?? '').toLowerCase();
+      if (SUMMARY_KEYWORDS.some(kw => transcriptLower.includes(kw))) {
+        await this.endSession();
+        return;
+      }
     } catch (err) {
       console.error('[SocialMode] processAudioStreaming failed:', err);
     }

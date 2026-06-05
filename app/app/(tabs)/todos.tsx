@@ -23,13 +23,17 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { theme } from '@/constants/theme';
+import { calendarService } from '@/services/CalendarService';
+import { notificationService } from '@/services/NotificationService';
 
 const TODOS_KEY = '@auris:todos';
 const EVENTS_KEY = '@auris:events';
 
 const PURPLE = '#9D4EDD';
 const CYAN = '#00E5FF';
+const GREEN = '#10B981';
 
 type Todo = {
   id: string;
@@ -37,6 +41,7 @@ type Todo = {
   done: boolean;
   createdAt: number;
   source: 'manual' | 'voice' | 'auris';
+  calendarSynced?: boolean;
 };
 
 type ScheduledEvent = {
@@ -46,6 +51,10 @@ type ScheduledEvent = {
   participants: string[];
   done: boolean;
   createdAt: number;
+  general_timeframe?: string;
+  location?: string;
+  description?: string;
+  calendarSynced?: boolean;
 };
 
 type Section = {
@@ -56,14 +65,54 @@ type Section = {
   isEvent?: boolean;
 };
 
+// Sync an event to iOS Calendar and send a push notification
+async function syncEventToCalendar(event: ScheduledEvent): Promise<void> {
+  const start = new Date(event.datetime);
+  const end = new Date(start.getTime() + 60 * 60 * 1000); // +1 hour
+  await calendarService.syncWithCalendar({
+    title: event.title,
+    startDate: start,
+    endDate: end,
+    allDay: false,
+    location: event.location,
+    notes: event.description,
+  });
+  notificationService.scheduleLocal(
+    'Added to Calendar',
+    `"${event.title}" was synced to your calendar.`,
+    { type: 'calendar_sync' },
+  ).catch(() => {});
+}
+
+// Sync an Auris-detected todo to iOS Calendar as an all-day event
+async function syncTodoToCalendar(todo: Todo): Promise<void> {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setHours(23, 59, 0, 0);
+  await calendarService.syncWithCalendar({
+    title: todo.text,
+    startDate: start,
+    endDate: end,
+    allDay: true,
+  });
+  notificationService.scheduleLocal(
+    'Task Added to Calendar',
+    `"${todo.text}" was added to today's calendar.`,
+    { type: 'calendar_sync' },
+  ).catch(() => {});
+}
+
 function TodoRow({
   todo,
   onToggle,
   onDelete,
+  onSync,
 }: {
   todo: Todo;
   onToggle: (id: string) => void;
   onDelete: (id: string) => void;
+  onSync: (id: string) => void;
 }) {
   const translateX = useSharedValue(0);
   const opacity = useSharedValue(1);
@@ -121,6 +170,20 @@ function TodoRow({
               {todo.text}
             </Text>
           </View>
+
+          {/* Calendar sync button — only for Auris-detected, not yet synced */}
+          {isAI && !todo.done && !todo.calendarSynced && (
+            <Pressable
+              style={styles.calSyncBtn}
+              onPress={() => onSync(todo.id)}
+              hitSlop={10}
+            >
+              <Ionicons name="calendar-outline" size={16} color={CYAN} />
+            </Pressable>
+          )}
+          {todo.calendarSynced && (
+            <Ionicons name="checkmark-circle" size={16} color={GREEN} style={{ marginRight: 4 }} />
+          )}
         </Animated.View>
       </GestureDetector>
     </View>
@@ -146,10 +209,12 @@ function EventRow({
   event,
   onToggle,
   onDelete,
+  onSync,
 }: {
   event: ScheduledEvent;
   onToggle: (id: string) => void;
   onDelete: (id: string) => void;
+  onSync: (id: string) => void;
 }) {
   const translateX = useSharedValue(0);
   const opacity = useSharedValue(1);
@@ -211,6 +276,20 @@ function EventRow({
                 : ''}
             </Text>
           </View>
+
+          {/* Sync to iOS Calendar button */}
+          {!event.done && !event.calendarSynced && (
+            <Pressable
+              style={styles.calSyncBtn}
+              onPress={() => onSync(event.id)}
+              hitSlop={10}
+            >
+              <Ionicons name="calendar-outline" size={16} color={CYAN} />
+            </Pressable>
+          )}
+          {event.calendarSynced && (
+            <Ionicons name="checkmark-circle" size={16} color={GREEN} style={{ marginRight: 4 }} />
+          )}
         </Animated.View>
       </GestureDetector>
     </View>
@@ -280,6 +359,54 @@ export default function TodosScreen() {
   const deleteEvent = (id: string) => {
     persistEvents(events.filter((e) => e.id !== id));
   };
+
+  const handleSyncTodo = useCallback((id: string) => {
+    const todo = todos.find((t) => t.id === id);
+    if (!todo) return;
+    Alert.alert(
+      'Add to Calendar',
+      `Add "${todo.text}" to today's calendar?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Add',
+          onPress: async () => {
+            try {
+              await syncTodoToCalendar(todo);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+              persist(todos.map((t) => t.id === id ? { ...t, calendarSynced: true } : t));
+            } catch (err: any) {
+              Alert.alert('Calendar Error', err?.message ?? 'Could not add to calendar.');
+            }
+          },
+        },
+      ],
+    );
+  }, [todos, persist]);
+
+  const handleSyncEvent = useCallback((id: string) => {
+    const event = events.find((e) => e.id === id);
+    if (!event) return;
+    Alert.alert(
+      'Sync to Calendar',
+      `Sync "${event.title}" to your iOS Calendar?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Sync',
+          onPress: async () => {
+            try {
+              await syncEventToCalendar(event);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+              persistEvents(events.map((e) => e.id === id ? { ...e, calendarSynced: true } : e));
+            } catch (err: any) {
+              Alert.alert('Calendar Error', err?.message ?? 'Could not sync to calendar.');
+            }
+          },
+        },
+      ],
+    );
+  }, [events, persistEvents]);
 
   const clearDone = () => {
     Alert.alert('Clear completed?', 'This removes all finished tasks and events.', [
@@ -361,12 +488,33 @@ export default function TodosScreen() {
         keyboardDismissMode="on-drag"
         renderItem={({ item, section }) => {
           if (section.isEvent && 'datetime' in item) {
-            return <EventRow event={item as ScheduledEvent} onToggle={toggleEvent} onDelete={deleteEvent} />;
+            return (
+              <EventRow
+                event={item as ScheduledEvent}
+                onToggle={toggleEvent}
+                onDelete={deleteEvent}
+                onSync={handleSyncEvent}
+              />
+            );
           }
           if ('datetime' in item) {
-            return <EventRow event={item as ScheduledEvent} onToggle={toggleEvent} onDelete={deleteEvent} />;
+            return (
+              <EventRow
+                event={item as ScheduledEvent}
+                onToggle={toggleEvent}
+                onDelete={deleteEvent}
+                onSync={handleSyncEvent}
+              />
+            );
           }
-          return <TodoRow todo={item as Todo} onToggle={toggleTodo} onDelete={deleteTodo} />;
+          return (
+            <TodoRow
+              todo={item as Todo}
+              onToggle={toggleTodo}
+              onDelete={deleteTodo}
+              onSync={handleSyncTodo}
+            />
+          );
         }}
         renderSectionHeader={({ section }) => (
           <SectionHeader title={section.title} color={section.color} icon={section.icon} />
@@ -506,6 +654,10 @@ const styles = StyleSheet.create({
     color: CYAN,
     marginTop: 3,
     opacity: 0.8,
+  },
+  calSyncBtn: {
+    padding: 4,
+    marginRight: 2,
   },
   separator: {
     height: 6,

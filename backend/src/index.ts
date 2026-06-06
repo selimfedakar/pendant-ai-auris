@@ -260,7 +260,7 @@ async function synthesizeSpeechOpenAI(text: string, openaiApiKey: string): Promi
   return response.arrayBuffer();
 }
 
-// Route TTS: Orpheus for English, OpenAI Nova for all other languages
+// Route TTS: Orpheus for English (with OpenAI Nova fallback), OpenAI Nova for all other languages
 async function synthesizeSpeech(
   text: string,
   groqApiKey: string,
@@ -268,7 +268,12 @@ async function synthesizeSpeech(
   language: string = "en",
 ): Promise<ArrayBuffer> {
   if (language === "en") {
-    return synthesizeSpeechOrpheus(text, groqApiKey);
+    try {
+      return await synthesizeSpeechOrpheus(text, groqApiKey);
+    } catch (err) {
+      console.error("Orpheus TTS failed, falling back to OpenAI Nova:", err instanceof Error ? err.message : err);
+      return synthesizeSpeechOpenAI(text, openaiApiKey);
+    }
   }
   return synthesizeSpeechOpenAI(text, openaiApiKey);
 }

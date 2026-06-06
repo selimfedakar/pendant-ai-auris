@@ -104,7 +104,10 @@ class SocialModeService {
   private async endSession(): Promise<void> {
     const wasActive = this.active;
     this.active = false;
-    this.sessionTimer = null;
+    if (this.sessionTimer) {
+      clearTimeout(this.sessionTimer);
+      this.sessionTimer = null;
+    }
 
     if (audioService.isRecording()) {
       try { await audioService.stopRecording(); } catch { /* ignore */ }

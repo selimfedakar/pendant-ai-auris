@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,9 @@ import {
   StyleSheet,
   Dimensions,
   Switch,
+  ScrollView,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
 } from 'react-native';
 import Animated, {
   useSharedValue,
@@ -26,21 +29,47 @@ const TEXT_PRIMARY = '#F0F0F0';
 const TEXT_SECONDARY = '#888888';
 const CYAN = '#00E5FF';
 
-// Maps general_timeframe to a default HH:MM start time
-function timeframeToHHMM(tf: string | undefined): string {
+const ITEM_HEIGHT = 40;
+const VISIBLE_ITEMS = 3;
+const PICKER_HEIGHT = ITEM_HEIGHT * VISIBLE_ITEMS; // 120
+
+const HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
+const MINUTES = Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, '0'));
+
+// Maps general_timeframe to default hours/minutes
+function timeframeToTime(tf: string | undefined): { h: number; m: number } {
   switch (tf) {
-    case 'morning': return '09:00';
-    case 'afternoon': return '14:00';
-    case 'evening': return '18:00';
-    default: return '09:00';
+    case 'morning':   return { h: 9,  m: 0 };
+    case 'afternoon': return { h: 14, m: 0 };
+    case 'evening':   return { h: 18, m: 0 };
+    default:          return { h: 9,  m: 0 };
   }
 }
 
-function currentTimeRounded(): string {
+function nearestThirtyFromNow(): { h: number; m: number } {
   const now = new Date();
-  const h = now.getHours();
-  const m = now.getMinutes() < 30 ? 0 : 30;
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  const m = now.getMinutes() < 30 ? 30 : 0;
+  const h = now.getMinutes() < 30 ? now.getHours() : (now.getHours() + 1) % 24;
+  return { h, m };
+}
+
+function deriveInitialTime(event: Props['event']): { h: number; m: number } {
+  if (!event) return nearestThirtyFromNow();
+  if (event.datetime) {
+    const timePart = event.datetime.split('T')[1];
+    if (timePart && timePart !== '00:00:00' && timePart !== '00:00') {
+      const [hStr, mStr] = timePart.split(':');
+      const h = parseInt(hStr ?? '9', 10);
+      const rawM = parseInt(mStr ?? '0', 10);
+      // Snap minutes to nearest 5
+      const m = Math.round(rawM / 5) * 5 % 60;
+      return { h, m };
+    }
+  }
+  if (event.general_timeframe) {
+    return timeframeToTime(event.general_timeframe);
+  }
+  return nearestThirtyFromNow();
 }
 
 type Props = {
@@ -52,6 +81,7 @@ type Props = {
     location?: string;
     description?: string;
     date?: string;
+    all_day?: boolean;
   } | null;
   onConfirm: (confirmed: {
     title: string;
@@ -73,50 +103,194 @@ function deriveDateString(event: Props['event']): string {
   return '';
 }
 
-function deriveTimeString(event: Props['event']): string | null {
-  if (!event) return null;
-  if (event.datetime) {
-    const timePart = event.datetime.split('T')[1];
-    if (timePart) return timePart.slice(0, 5);
-  }
-  return null;
+// ─── Drum-roll column ────────────────────────────────────────────────────────
+
+type DrumColumnProps = {
+  items: string[];
+  selectedIndex: number;
+  onIndexChange: (i: number) => void;
+  scrollRef: React.RefObject<ScrollView | null>;
+};
+
+function DrumColumn({ items, selectedIndex, onIndexChange, scrollRef }: DrumColumnProps) {
+  const handleMomentumEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const offset = e.nativeEvent.contentOffset.y;
+    const index = Math.round(offset / ITEM_HEIGHT);
+    const clamped = Math.max(0, Math.min(items.length - 1, index));
+    onIndexChange(clamped);
+  };
+
+  return (
+    <View style={drumStyles.column}>
+      <ScrollView
+        ref={scrollRef}
+        style={{ height: PICKER_HEIGHT }}
+        showsVerticalScrollIndicator={false}
+        snapToInterval={ITEM_HEIGHT}
+        decelerationRate="fast"
+        onMomentumScrollEnd={handleMomentumEnd}
+        scrollEventThrottle={16}
+        contentContainerStyle={{ paddingVertical: ITEM_HEIGHT }}
+      >
+        {items.map((label, i) => (
+          <View key={label} style={drumStyles.item}>
+            <Text
+              style={[
+                drumStyles.itemText,
+                i === selectedIndex && drumStyles.itemTextSelected,
+              ]}
+            >
+              {label}
+            </Text>
+          </View>
+        ))}
+      </ScrollView>
+
+      {/* Center highlight — ITEM_HEIGHT from top = center row of 3-item view */}
+      <View pointerEvents="none" style={drumStyles.highlightOverlay} />
+    </View>
+  );
 }
 
-function hasSpecificTime(event: Props['event']): boolean {
-  if (!event) return false;
-  if (event.datetime) {
-    const timePart = event.datetime.split('T')[1];
-    return !!timePart && timePart !== '00:00:00' && timePart !== '00:00';
-  }
-  return false;
+const drumStyles = StyleSheet.create({
+  column: {
+    flex: 1,
+    height: PICKER_HEIGHT,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  item: {
+    height: ITEM_HEIGHT,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  itemText: {
+    fontSize: 14,
+    color: '#555',
+    fontWeight: '500',
+  },
+  itemTextSelected: {
+    fontSize: 18,
+    color: GOLD_BRIGHT,
+    fontWeight: '700',
+  },
+  highlightOverlay: {
+    position: 'absolute',
+    top: ITEM_HEIGHT, // skip top padding row → center row starts here
+    left: 0,
+    right: 0,
+    height: ITEM_HEIGHT,
+    backgroundColor: '#C9A84C20',
+    borderTopWidth: 0.5,
+    borderBottomWidth: 0.5,
+    borderColor: GOLD,
+  },
+});
+
+// ─── DrumPicker (hours + separator + minutes) ────────────────────────────────
+
+type DrumPickerProps = {
+  hour: number;
+  minute: number; // 0,5,10,...,55
+  onHourChange: (h: number) => void;
+  onMinuteChange: (m: number) => void;
+  hourScrollRef: React.RefObject<ScrollView | null>;
+  minuteScrollRef: React.RefObject<ScrollView | null>;
+};
+
+function DrumPicker({ hour, minute, onHourChange, onMinuteChange, hourScrollRef, minuteScrollRef }: DrumPickerProps) {
+  const minuteIndex = Math.round(minute / 5);
+
+  return (
+    <View style={pickerStyles.container}>
+      <DrumColumn
+        items={HOURS}
+        selectedIndex={hour}
+        onIndexChange={onHourChange}
+        scrollRef={hourScrollRef}
+      />
+      <View style={pickerStyles.separator}>
+        <Text style={pickerStyles.separatorText}>:</Text>
+      </View>
+      <DrumColumn
+        items={MINUTES}
+        selectedIndex={minuteIndex}
+        onIndexChange={(i) => onMinuteChange(i * 5)}
+        scrollRef={minuteScrollRef}
+      />
+    </View>
+  );
 }
+
+const pickerStyles = StyleSheet.create({
+  container: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: SURFACE,
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 12,
+    overflow: 'hidden',
+    height: PICKER_HEIGHT,
+  },
+  separator: {
+    width: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  separatorText: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: GOLD,
+  },
+});
+
+// ─── Main component ───────────────────────────────────────────────────────────
 
 export function CalendarConfirmationCard({ visible, event, onConfirm, onCancel }: Props) {
   const translateY = useSharedValue(SCREEN_HEIGHT);
 
   const [title, setTitle] = useState('');
   const [location, setLocation] = useState('');
-  const [isAllDay, setIsAllDay] = useState<boolean>(() => {
-    if (!event) return true;
-    return !hasSpecificTime(event);
-  });
-  const [timeInput, setTimeInput] = useState<string>(() => {
-    if (!event) return '09:00';
-    if (hasSpecificTime(event)) return deriveTimeString(event) ?? '09:00';
-    return timeframeToHHMM(event.general_timeframe);
-  });
+
+  // isAllDay defaults to false unless event explicitly says all_day: true
+  const [isAllDay, setIsAllDay] = useState<boolean>(false);
+
+  // selectedTime holds the chosen hour (0-23) and minute (0,5,...,55)
+  const [selectedHour, setSelectedHour] = useState<number>(9);
+  const [selectedMinute, setSelectedMinute] = useState<number>(0);
+
   const [titleFocused, setTitleFocused] = useState(false);
   const [locationFocused, setLocationFocused] = useState(false);
-  const [timeFocused, setTimeFocused] = useState(false);
+
+  const hourScrollRef = useRef<ScrollView>(null);
+  const minuteScrollRef = useRef<ScrollView>(null);
+
+  // Scroll the columns to reflect current selection
+  const scrollToSelection = (h: number, m: number) => {
+    // Delay slightly so the ScrollView is mounted and measured
+    setTimeout(() => {
+      hourScrollRef.current?.scrollTo({ y: h * ITEM_HEIGHT, animated: false });
+      minuteScrollRef.current?.scrollTo({ y: Math.round(m / 5) * ITEM_HEIGHT, animated: false });
+    }, 50);
+  };
 
   // Sync state from incoming event prop whenever card becomes visible or event changes
   useEffect(() => {
     if (visible && event) {
       setTitle(event.title ?? '');
       setLocation(event.location ?? '');
-      const specificTime = hasSpecificTime(event);
-      setIsAllDay(!specificTime);
-      setTimeInput(specificTime ? (deriveTimeString(event) ?? '09:00') : timeframeToHHMM(event.general_timeframe));
+
+      const allDay = event.all_day === true;
+      setIsAllDay(allDay);
+
+      const { h, m } = deriveInitialTime(event);
+      setSelectedHour(h);
+      setSelectedMinute(m);
+
+      if (!allDay) {
+        scrollToSelection(h, m);
+      }
     }
   }, [visible, event]);
 
@@ -155,11 +329,8 @@ export function CalendarConfirmationCard({ visible, event, onConfirm, onCancel }
       startDate.setHours(0, 0, 0, 0);
       endDate.setHours(23, 59, 0, 0);
     } else {
-      const parts = timeInput.split(':');
-      const h = parseInt(parts[0] ?? '9', 10) || 9;
-      const m = parseInt(parts[1] ?? '0', 10) || 0;
-      startDate.setHours(h, m, 0, 0);
-      endDate.setHours(h + 1, m, 0, 0);
+      startDate.setHours(selectedHour, selectedMinute, 0, 0);
+      endDate.setHours(selectedHour + 1, selectedMinute, 0, 0);
     }
 
     onConfirm({
@@ -208,40 +379,17 @@ export function CalendarConfirmationCard({ visible, event, onConfirm, onCancel }
 
       {/* Time / All-day row */}
       <View style={styles.fieldRow}>
-        <Text style={styles.fieldLabel}>TIME</Text>
-        <View style={styles.timeRow}>
-          {isAllDay ? (
-            <View style={styles.readonlyChip}>
-              <Ionicons name="sunny-outline" size={12} color={CYAN} style={{ marginRight: 6 }} />
-              <Text style={styles.readonlyChipText}>ALL DAY</Text>
-            </View>
-          ) : (
-            <TextInput
-              style={[styles.timeInput, timeFocused && styles.timeInputFocused]}
-              value={timeInput}
-              onChangeText={(v) => {
-                // Allow only digits and colon, max 5 chars (HH:MM)
-                const cleaned = v.replace(/[^0-9:]/g, '').slice(0, 5);
-                setTimeInput(cleaned);
-              }}
-              onFocus={() => setTimeFocused(true)}
-              onBlur={() => setTimeFocused(false)}
-              placeholder="HH:MM"
-              placeholderTextColor={TEXT_SECONDARY}
-              keyboardType="numbers-and-punctuation"
-              selectionColor={CYAN}
-              returnKeyType="done"
-              maxLength={5}
-            />
-          )}
+        <View style={styles.timeHeaderRow}>
+          <Text style={styles.fieldLabel}>TIME</Text>
           <View style={styles.allDayToggleRow}>
             <Text style={styles.allDayLabel}>ALL DAY</Text>
             <Switch
               value={isAllDay}
               onValueChange={(val) => {
                 setIsAllDay(val);
-                if (!val && timeInput === '09:00') {
-                  setTimeInput(currentTimeRounded());
+                if (!val) {
+                  // Scroll to current selection when revealing picker
+                  scrollToSelection(selectedHour, selectedMinute);
                 }
               }}
               trackColor={{ false: BORDER, true: `${GOLD}80` }}
@@ -250,6 +398,22 @@ export function CalendarConfirmationCard({ visible, event, onConfirm, onCancel }
             />
           </View>
         </View>
+
+        {isAllDay ? (
+          <View style={styles.readonlyChip}>
+            <Ionicons name="sunny-outline" size={12} color={CYAN} style={{ marginRight: 6 }} />
+            <Text style={styles.readonlyChipText}>ALL DAY</Text>
+          </View>
+        ) : (
+          <DrumPicker
+            hour={selectedHour}
+            minute={selectedMinute}
+            onHourChange={(h) => setSelectedHour(h)}
+            onMinuteChange={(m) => setSelectedMinute(m)}
+            hourScrollRef={hourScrollRef}
+            minuteScrollRef={minuteScrollRef}
+          />
+        )}
       </View>
 
       {/* Location field */}
@@ -362,26 +526,11 @@ const styles = StyleSheet.create({
     color: CYAN,
     letterSpacing: 0.5,
   },
-  timeRow: {
+  timeHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-  },
-  timeInput: {
-    backgroundColor: SURFACE,
-    borderWidth: 1,
-    borderColor: BORDER,
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    fontSize: 15,
-    fontWeight: '600',
-    color: CYAN,
-    minWidth: 80,
-    letterSpacing: 1,
-  },
-  timeInputFocused: {
-    borderColor: CYAN,
+    marginBottom: 6,
   },
   allDayToggleRow: {
     flexDirection: 'row',

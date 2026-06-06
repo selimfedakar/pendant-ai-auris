@@ -19,6 +19,7 @@ import * as Google from 'expo-auth-session/providers/google';
 import * as WebBrowser from 'expo-web-browser';
 import { AurisOrb, OrbState } from '@/components/AurisOrb';
 import { CalendarConfirmationCard } from '@/components/CalendarConfirmationCard';
+import { SocialSummaryCard } from '@/components/SocialSummaryCard';
 import { FloatingCanvas } from '@/components/FloatingCanvas';
 import { VisionAnalysis } from '@/components/VisionAnalysis';
 import { ContextualBottomSheet } from '@/components/ContextualBottomSheet';
@@ -88,6 +89,7 @@ export default function HomeScreen() {
     description?: string;
   } | null>(null);
   const streamingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [socialSummary, setSocialSummary] = useState<{ summary: string; durationMinutes: number; transcriptCount: number } | null>(null);
 
   // Vision hint pulse animation
   const visionHintOpacity = useSharedValue(0);
@@ -262,7 +264,13 @@ export default function HomeScreen() {
   useEffect(() => {
     backendService.loadConfig();
     audioService.requestPermissions();
-    notificationService.setup().catch(() => {});
+    notificationService.setup()
+      .then(() => {
+        if (!notificationService.isReady()) {
+          console.warn('[Notifications] permission not granted');
+        }
+      })
+      .catch((err) => console.error('[Notifications] setup failed:', err));
     notificationService.setOnNotificationPress(() => setMode('solo'));
     return () => {
       if (streamingTimerRef.current) clearInterval(streamingTimerRef.current);
@@ -326,10 +334,7 @@ export default function HomeScreen() {
       setMode('solo');
       setOrbState('idle');
       isProcessingRef.current = false;
-      const msg = transcriptCount > 0
-        ? `Social session ended (${durationMinutes} min, ${transcriptCount} segments). ${summary}`
-        : `Social session ended.`;
-      addStreamingMessageRef.current(msg);
+      setSocialSummary({ summary, durationMinutes, transcriptCount });
     });
 
     socialModeService.onInsight(async ({ transcript: t, reply, todos, events }) => {
@@ -850,6 +855,15 @@ export default function HomeScreen() {
         event={pendingCalendarAction}
         onConfirm={handleCalendarConfirm}
         onCancel={handleCalendarCancel}
+      />
+
+      {/* Social session summary card */}
+      <SocialSummaryCard
+        visible={socialSummary !== null}
+        summary={socialSummary?.summary ?? ''}
+        durationMinutes={socialSummary?.durationMinutes ?? 0}
+        transcriptCount={socialSummary?.transcriptCount ?? 0}
+        onDismiss={() => setSocialSummary(null)}
       />
 
       {/* Camera modal */}

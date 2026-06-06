@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 
 class NotificationService {
   private responseSubscription: Notifications.EventSubscription | null = null;
+  private receivedSubscription: Notifications.EventSubscription | null = null;
   private onPressHandler: ((data: Record<string, unknown>) => void) | null = null;
   private ready = false;
 
@@ -18,10 +19,18 @@ class NotificationService {
     const safeBody = typeof body === 'string' && body.length > 60
       ? body.slice(0, 57) + '…'
       : body;
-    await Notifications.scheduleNotificationAsync({
-      content: { title, body: safeBody, data: data ?? {} },
-      trigger: null,
-    });
+    try {
+      await Notifications.scheduleNotificationAsync({
+        content: { title, body: safeBody, data: data ?? {} },
+        trigger: null,
+      });
+    } catch (err) {
+      console.error('[Notification] scheduleLocal failed:', err);
+    }
+  }
+
+  isReady(): boolean {
+    return this.ready;
   }
 
   setOnNotificationPress(handler: (data: Record<string, unknown>) => void): void {
@@ -48,10 +57,16 @@ class NotificationService {
     }
 
     if (this.responseSubscription) this.responseSubscription.remove();
+    if (this.receivedSubscription) this.receivedSubscription.remove();
 
     this.responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
       const data = response.notification.request.content.data as Record<string, unknown>;
       this.onPressHandler?.(data);
+    });
+
+    // Required in expo-notifications v56 to display alerts while the app is in the foreground.
+    this.receivedSubscription = Notifications.addNotificationReceivedListener((notification) => {
+      console.log('[Notification] received in foreground:', notification.request.content.title);
     });
 
     this.ready = true;
@@ -60,6 +75,8 @@ class NotificationService {
   destroy(): void {
     this.responseSubscription?.remove();
     this.responseSubscription = null;
+    this.receivedSubscription?.remove();
+    this.receivedSubscription = null;
     this.onPressHandler = null;
     this.ready = false;
   }

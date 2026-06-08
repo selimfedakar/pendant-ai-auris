@@ -1,8 +1,5 @@
-// BLE bridge for XIAO ESP32S3 pendant (hardware arrives June 2-8).
-// Library: react-native-ble-plx — install with Expo config plugin when hardware is ready:
-//   npx expo install react-native-ble-plx
-//   Add plugin to app.json: ["react-native-ble-plx", { "isBackgroundEnabled": false }]
-//   Then rebuild: npx expo run:ios --port 8082
+import { BleManager, Device, Subscription } from 'react-native-ble-plx';
+import { Buffer } from 'buffer';
 
 export type BLEConnectionState = 'disconnected' | 'scanning' | 'connecting' | 'connected';
 
@@ -11,95 +8,163 @@ export type BLEAudioChunk = {
   data: Uint8Array;
 };
 
-// Characteristic UUIDs — to be finalized once firmware is written.
-// These match the PlatformIO sketch convention; update when firmware is confirmed.
-const AURIS_SERVICE_UUID = '12345678-1234-1234-1234-1234567890AB';
-const AUDIO_CHAR_UUID = '12345678-1234-1234-1234-1234567890AC';
+// UUIDs from firmware (main.cpp)
+const AURIS_SERVICE_UUID = '12345678-1234-1234-1234-123456789abc';
+const AUDIO_CHAR_UUID    = '12345678-1234-1234-1234-123456789abd';
+const CTRL_CHAR_UUID     = '12345678-1234-1234-1234-123456789abe';
+
+// Firmware sends 240 bytes of PCM per notify; 3200 bytes = 100 ms at 16 kHz 16-bit mono
+const FLUSH_THRESHOLD_BYTES = 3200;
 
 class BLEService {
+  private manager: BleManager | null = null;
+  private device: Device | null = null;
+  private audioSub: Subscription | null = null;
   private connectionState: BLEConnectionState = 'disconnected';
-  private chunkBuffer: Uint8Array[] = [];
+
+  private pcmChunks: Uint8Array[] = [];
+  private pcmBytes = 0;
+
   private onChunkCallback: ((chunk: BLEAudioChunk) => void) | null = null;
+  private onFlushCallback: ((pcm: Uint8Array) => void) | null = null;
   private onStateChangeCallback: ((state: BLEConnectionState) => void) | null = null;
 
-  getConnectionState(): BLEConnectionState {
-    return this.connectionState;
+  private getManager(): BleManager {
+    if (!this.manager) this.manager = new BleManager();
+    return this.manager;
   }
 
-  isConnected(): boolean {
-    return this.connectionState === 'connected';
-  }
+  getConnectionState(): BLEConnectionState { return this.connectionState; }
+  isConnected(): boolean { return this.connectionState === 'connected'; }
 
-  onStateChange(cb: (state: BLEConnectionState) => void): void {
-    this.onStateChangeCallback = cb;
-  }
-
-  onAudioChunk(cb: (chunk: BLEAudioChunk) => void): void {
-    this.onChunkCallback = cb;
-  }
+  onStateChange(cb: (state: BLEConnectionState) => void): void { this.onStateChangeCallback = cb; }
+  onAudioChunk(cb: (chunk: BLEAudioChunk) => void): void { this.onChunkCallback = cb; }
+  // Called every ~100 ms with a 3200-byte raw PCM buffer (16 kHz, 16-bit, mono LE)
+  onAudioFlush(cb: (pcm: Uint8Array) => void): void { this.onFlushCallback = cb; }
 
   private setState(next: BLEConnectionState): void {
     this.connectionState = next;
     this.onStateChangeCallback?.(next);
   }
 
-  // Scan for the Auris pendant and resolve with its device ID.
-  async startScan(timeoutMs = 10_000): Promise<string> {
-    // TODO: Use BleManager.startDeviceScan() from react-native-ble-plx.
-    // Filter by AURIS_SERVICE_UUID. Resolve on first matching device.
-    console.warn('[BLE] startScan: hardware not available yet — ESP32S3 arriving June 2-8');
-    this.setState('disconnected');
-    return '';
+  async scanAndConnect(timeoutMs = 10_000): Promise<void> {
+    const mgr = this.getManager();
+    this.setState('scanning');
+
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        mgr.stopDeviceScan();
+        this.setState('disconnected');
+        reject(new Error('BLE scan timeout — AurisPendant not found'));
+      }, timeoutMs);
+
+      mgr.startDeviceScan(
+        [AURIS_SERVICE_UUID],
+        { allowDuplicates: false },
+        async (error, device) => {
+          if (error) {
+            clearTimeout(timer);
+            this.setState('disconnected');
+            reject(error);
+            return;
+          }
+          if (!device) return;
+
+          mgr.stopDeviceScan();
+          clearTimeout(timer);
+          this.setState('connecting');
+
+          try {
+            const connected = await device.connect({ requestMTU: 512 });
+            await connected.discoverAllServicesAndCharacteristics();
+            this.device = connected;
+            this.setState('connected');
+
+            connected.onDisconnected((_err, _dev) => {
+              this.device = null;
+              this.audioSub = null;
+              this.setState('disconnected');
+            });
+
+            resolve();
+          } catch (err) {
+            this.setState('disconnected');
+            reject(err);
+          }
+        },
+      );
+    });
   }
 
-  // Connect to the pendant by device ID returned from startScan().
-  async connect(deviceId?: string): Promise<void> {
-    // TODO: BleManager.connectToDevice(deviceId) → discoverAllServicesAndCharacteristics().
-    console.warn('[BLE] Hardware not available yet — ESP32S3 arriving June 2-8');
+  async startStream(): Promise<void> {
+    if (!this.device || !this.isConnected()) throw new Error('BLE not connected');
+
+    const startCmd = Buffer.from([0x01]).toString('base64');
+    await this.device.writeCharacteristicWithoutResponseForService(
+      AURIS_SERVICE_UUID, CTRL_CHAR_UUID, startCmd,
+    );
+
+    this.pcmChunks = [];
+    this.pcmBytes = 0;
+
+    this.audioSub = this.device.monitorCharacteristicForService(
+      AURIS_SERVICE_UUID,
+      AUDIO_CHAR_UUID,
+      (error, char) => {
+        if (error || !char?.value) return;
+
+        const raw = Buffer.from(char.value, 'base64');
+        if (raw.length < 3) return;
+
+        const seqNum = (raw[0]! << 8) | raw[1]!;
+        const audio = new Uint8Array(raw.buffer, raw.byteOffset + 2, raw.length - 2);
+
+        this.onChunkCallback?.({ sequenceNumber: seqNum, data: audio });
+
+        this.pcmChunks.push(audio);
+        this.pcmBytes += audio.length;
+
+        if (this.pcmBytes >= FLUSH_THRESHOLD_BYTES) {
+          this.onFlushCallback?.(this.flushBuffer());
+        }
+      },
+    );
   }
 
-  // Disconnect gracefully.
-  async disconnect(): Promise<void> {
-    // TODO: device.cancelConnection()
-    this.chunkBuffer = [];
-    this.setState('disconnected');
-  }
+  async stopStream(): Promise<void> {
+    this.audioSub?.remove();
+    this.audioSub = null;
 
-  // Subscribe to the audio characteristic and start buffering chunks.
-  async startAudioStream(): Promise<void> {
-    if (!this.isConnected()) {
-      console.warn('[BLE] startAudioStream: not connected — no-op');
-      return;
+    if (this.device && this.isConnected()) {
+      try {
+        const stopCmd = Buffer.from([0x02]).toString('base64');
+        await this.device.writeCharacteristicWithoutResponseForService(
+          AURIS_SERVICE_UUID, CTRL_CHAR_UUID, stopCmd,
+        );
+      } catch { /* best effort */ }
     }
-    // TODO: device.monitorCharacteristicForService(AURIS_SERVICE_UUID, AUDIO_CHAR_UUID, ...)
-    // Parse incoming base64 characteristic value → Uint8Array → push to chunkBuffer.
-    console.warn('[BLE] startAudioStream: hardware pending');
+
+    if (this.pcmBytes > 0) this.onFlushCallback?.(this.flushBuffer());
   }
 
-  // Unsubscribe from the audio characteristic.
-  async stopAudioStream(): Promise<void> {
-    // TODO: Remove the characteristic subscription created in startAudioStream().
-    this.chunkBuffer = [];
+  async disconnect(): Promise<void> {
+    await this.stopStream().catch(() => {});
+    if (this.device) {
+      try { await this.device.cancelConnection(); } catch { /* ignore */ }
+      this.device = null;
+    }
+    this.setState('disconnected');
   }
 
-  // ESP32 → iOS audio pipeline — called when a BLE audio notification arrives.
-  // Register a handler via onAudioChunk() before streaming; this method feeds
-  // raw PCM ArrayBuffers from the pendant through to the registered callback.
-  async processBLEAudioBuffer(buffer: ArrayBuffer): Promise<void> {
-    // ESP32 → iOS audio pipeline — implement after hardware arrives
-    console.warn('[BLE] processBLEAudioBuffer: hardware pending');
-  }
-
-  // Concatenate all buffered chunks into a single contiguous audio buffer and clear the buffer.
   flushBuffer(): Uint8Array {
-    const total = this.chunkBuffer.reduce((n, c) => n + c.length, 0);
-    const merged = new Uint8Array(total);
+    const merged = new Uint8Array(this.pcmBytes);
     let offset = 0;
-    for (const chunk of this.chunkBuffer) {
+    for (const chunk of this.pcmChunks) {
       merged.set(chunk, offset);
       offset += chunk.length;
     }
-    this.chunkBuffer = [];
+    this.pcmChunks = [];
+    this.pcmBytes = 0;
     return merged;
   }
 }

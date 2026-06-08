@@ -72,7 +72,8 @@
         }
       ],
       "expo-web-browser",
-      "expo-splash-screen"
+      "expo-splash-screen",
+      "react-native-ble-plx"
     ],
     "extra": {
       "router": {},

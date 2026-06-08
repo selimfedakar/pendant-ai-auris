@@ -910,4 +910,89 @@ app.post("/v1/process-audio", async (c) => {
   }
 });
 
+// ESP32S3 pendant endpoint — body is raw PCM (16 kHz, mono, 16-bit LE, no header).
+// Wraps the PCM in a 44-byte WAV header before sending to Groq Whisper, then runs
+// the transcript through the LLM pipeline and returns plain JSON (no TTS).
+app.post("/v1/process-audio-pcm", async (c) => {
+  const userId = c.req.header("X-User-Id");
+  if (!userId) {
+    return c.json({ error: "Missing X-User-Id header" }, 400);
+  }
+
+  const pcmBody = await c.req.arrayBuffer();
+  if (!pcmBody || pcmBody.byteLength === 0) {
+    return c.json({ error: "Empty audio body" }, 400);
+  }
+
+  try {
+    // Build 44-byte WAV header inline using DataView.
+    const pcmByteLength = pcmBody.byteLength;
+    const headerBuffer = new ArrayBuffer(44);
+    const view = new DataView(headerBuffer);
+
+    // Bytes 0-3: "RIFF"
+    view.setUint8(0, 0x52); view.setUint8(1, 0x49); view.setUint8(2, 0x46); view.setUint8(3, 0x46);
+    // Bytes 4-7: chunk size = 36 + pcmByteLength
+    view.setUint32(4, 36 + pcmByteLength, true);
+    // Bytes 8-11: "WAVE"
+    view.setUint8(8, 0x57); view.setUint8(9, 0x41); view.setUint8(10, 0x56); view.setUint8(11, 0x45);
+    // Bytes 12-15: "fmt "
+    view.setUint8(12, 0x66); view.setUint8(13, 0x6D); view.setUint8(14, 0x74); view.setUint8(15, 0x20);
+    // Bytes 16-19: subchunk1 size = 16
+    view.setUint32(16, 16, true);
+    // Bytes 20-21: audio format = 1 (PCM)
+    view.setUint16(20, 1, true);
+    // Bytes 22-23: num channels = 1 (mono)
+    view.setUint16(22, 1, true);
+    // Bytes 24-27: sample rate = 16000
+    view.setUint32(24, 16000, true);
+    // Bytes 28-31: byte rate = 16000 * 1 * 2 = 32000
+    view.setUint32(28, 32000, true);
+    // Bytes 32-33: block align = 2
+    view.setUint16(32, 2, true);
+    // Bytes 34-35: bits per sample = 16
+    view.setUint16(34, 16, true);
+    // Bytes 36-39: "data"
+    view.setUint8(36, 0x64); view.setUint8(37, 0x61); view.setUint8(38, 0x74); view.setUint8(39, 0x61);
+    // Bytes 40-43: subchunk2 size = pcmByteLength
+    view.setUint32(40, pcmByteLength, true);
+
+    // Concatenate header + PCM into a single WAV Blob.
+    const wavBlob = new Blob([headerBuffer, pcmBody], { type: "audio/wav" });
+
+    const [sttResult, history] = await Promise.all([
+      transcribeAudio(wavBlob, c.env.GROQ_API_KEY),
+      loadHistory(c.env.CONVERSATIONS, userId),
+    ]);
+    const transcript = sttResult.text;
+
+    if (!transcript) return c.json({ error: "No speech detected in audio" }, 422);
+
+    const { reply, todos, events } = await generateReply(
+      transcript,
+      history,
+      "companion",
+      "",
+      "",
+      c.env.ANTHROPIC_API_KEY,
+    );
+
+    await saveHistory(c.env.CONVERSATIONS, userId, [
+      ...history,
+      { role: "user", content: transcript },
+      { role: "assistant", content: reply },
+    ]);
+
+    const responseBody: Record<string, unknown> = { transcript, reply };
+    if (todos.length > 0) responseBody.todos = todos;
+    if (events.length > 0) responseBody.events = events;
+
+    return c.json(responseBody);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("process-audio-pcm error:", message);
+    return c.json({ error: message }, 500);
+  }
+});
+
 export default app;

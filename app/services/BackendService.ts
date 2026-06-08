@@ -189,7 +189,11 @@ class BackendService {
       }
 
       if (audioUri) {
-        return await this.processAudioStreaming(audioUri, userId, personality, userName, userProfession, contextData);
+        // Use the synchronous JSON endpoint (not streaming) so the full TTS audio
+        // buffer is always returned in one piece.  The streaming endpoint fires
+        // writeChunks() as a floating promise and can return 0 bytes if any
+        // sentence-level TTS call fails, causing silent playback failures.
+        return await this.processAudio(audioUri, userId, personality, userName, userProfession, undefined, contextData);
       }
 
       throw new Error('Image-only payloads require audio — capture audio first');
@@ -252,6 +256,40 @@ class BackendService {
         // Leave in queue; will retry next time
       }
     }
+  }
+
+  async processPCM(
+    pcm: Uint8Array,
+    userId: string,
+    personality?: string,
+  ): Promise<{ transcript: string; reply: string; todos: string[]; events: DetectedEvent[] }> {
+    const body: ArrayBuffer = pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + pcm.byteLength) as ArrayBuffer;
+    const response = await this.fetchWithTimeout(`${this.backendUrl}/v1/process-audio-pcm`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-Auris-Key': AURIS_API_KEY,
+        'X-User-Id': userId,
+        ...(personality && { 'X-Personality': personality }),
+      },
+      body,
+    });
+    if (!response.ok) {
+      const err = await response.text().catch(() => `${response.status}`);
+      throw new Error(`Backend PCM error: ${err}`);
+    }
+    const data = (await response.json()) as {
+      transcript: string;
+      reply: string;
+      todos?: string[];
+      events?: DetectedEvent[];
+    };
+    return {
+      transcript: data.transcript ?? '',
+      reply: data.reply ?? '',
+      todos: Array.isArray(data.todos) ? data.todos : [],
+      events: Array.isArray(data.events) ? data.events : [],
+    };
   }
 
   async healthCheck(): Promise<boolean> {

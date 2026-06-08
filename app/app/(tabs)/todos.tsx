@@ -7,10 +7,12 @@ import {
   Pressable,
   SectionList,
   Alert,
-  ActionSheetIOS,
   KeyboardAvoidingView,
   Platform,
   Keyboard,
+  Modal,
+  ScrollView,
+  TouchableWithoutFeedback,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
@@ -103,6 +105,402 @@ async function syncTodoToCalendar(todo: Todo): Promise<void> {
     { type: 'calendar_sync' },
   ).catch(() => {});
 }
+
+// ─── Event edit bottom sheet ────────────────────────────────────────────────
+
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function pad(n: number): string { return n < 10 ? `0${n}` : `${n}`; }
+
+function EventEditSheet({
+  event,
+  visible,
+  onSave,
+  onClose,
+}: {
+  event: ScheduledEvent | null;
+  visible: boolean;
+  onSave: (updated: ScheduledEvent) => void;
+  onClose: () => void;
+}) {
+  const insets = useSafeAreaInsets();
+  const translateY = useSharedValue(600);
+
+  const [title, setTitle] = useState('');
+  const [date, setDate] = useState(new Date());
+  const [hour, setHour] = useState(9);
+  const [minute, setMinute] = useState(0);
+  const [location, setLocation] = useState('');
+  const [description, setDescription] = useState('');
+
+  useEffect(() => {
+    if (visible && event) {
+      const d = new Date(event.datetime);
+      setTitle(event.title);
+      setDate(isNaN(d.getTime()) ? new Date() : d);
+      setHour(isNaN(d.getTime()) ? 9 : d.getHours());
+      setMinute(isNaN(d.getTime()) ? 0 : Math.round(d.getMinutes() / 5) * 5 % 60);
+      setLocation(event.location ?? '');
+      setDescription(event.description ?? '');
+      translateY.value = withSpring(0, { damping: 22, stiffness: 180 });
+    } else {
+      translateY.value = withTiming(600, { duration: 260 });
+    }
+  }, [visible, event]);
+
+  const sheetStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: translateY.value }],
+  }));
+
+  const shiftDay = (delta: number) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setDate(prev => {
+      const next = new Date(prev);
+      next.setDate(prev.getDate() + delta);
+      return next;
+    });
+  };
+
+  const changeHour = (delta: number) => {
+    Haptics.selectionAsync().catch(() => {});
+    setHour(h => (h + delta + 24) % 24);
+  };
+
+  const changeMinute = (delta: number) => {
+    Haptics.selectionAsync().catch(() => {});
+    setMinute(m => (m + delta * 5 + 60) % 60);
+  };
+
+  const handleSave = () => {
+    if (!event) return;
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    const newDate = new Date(date);
+    newDate.setHours(hour, minute, 0, 0);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    onSave({
+      ...event,
+      title: trimmed,
+      datetime: newDate.toISOString(),
+      location: location.trim() || undefined,
+      description: description.trim() || undefined,
+      calendarSynced: false,
+    });
+  };
+
+  if (!event) return null;
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="none"
+      onRequestClose={onClose}
+    >
+      <TouchableWithoutFeedback onPress={() => { Keyboard.dismiss(); onClose(); }}>
+        <View style={sheet.backdrop} />
+      </TouchableWithoutFeedback>
+
+      <Animated.View style={[sheet.container, { paddingBottom: insets.bottom + 16 }, sheetStyle]}>
+        {/* Handle */}
+        <View style={sheet.handle} />
+
+        {/* Header */}
+        <View style={sheet.header}>
+          <Pressable onPress={onClose} hitSlop={16}>
+            <Text style={sheet.cancelBtn}>Cancel</Text>
+          </Pressable>
+          <Text style={sheet.headerTitle}>EDIT EVENT</Text>
+          <Pressable onPress={handleSave} hitSlop={16}>
+            <Text style={[sheet.saveBtn, !title.trim() && sheet.saveBtnDisabled]}>Save</Text>
+          </Pressable>
+        </View>
+
+        <ScrollView
+          style={sheet.scroll}
+          contentContainerStyle={sheet.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Title */}
+          <View style={sheet.section}>
+            <Text style={sheet.label}>TITLE</Text>
+            <TextInput
+              style={sheet.textInput}
+              value={title}
+              onChangeText={setTitle}
+              placeholderTextColor={theme.colors.textTertiary}
+              selectionColor={CYAN}
+              autoCorrect
+            />
+          </View>
+
+          {/* Date */}
+          <View style={sheet.section}>
+            <Text style={sheet.label}>DATE</Text>
+            <View style={sheet.dateRow}>
+              <Pressable style={sheet.arrowBtn} onPress={() => shiftDay(-1)} hitSlop={12}>
+                <Ionicons name="chevron-back" size={20} color={CYAN} />
+              </Pressable>
+              <View style={sheet.dateDisplay}>
+                <Text style={sheet.dateDay}>{DAYS[date.getDay()]}</Text>
+                <Text style={sheet.dateMain}>
+                  {MONTHS[date.getMonth()]} {date.getDate()}, {date.getFullYear()}
+                </Text>
+              </View>
+              <Pressable style={sheet.arrowBtn} onPress={() => shiftDay(1)} hitSlop={12}>
+                <Ionicons name="chevron-forward" size={20} color={CYAN} />
+              </Pressable>
+            </View>
+          </View>
+
+          {/* Time */}
+          <View style={sheet.section}>
+            <Text style={sheet.label}>TIME</Text>
+            <View style={sheet.timeRow}>
+              {/* Hour */}
+              <View style={sheet.timePicker}>
+                <Pressable style={sheet.timeArrow} onPress={() => changeHour(1)} hitSlop={12}>
+                  <Ionicons name="chevron-up" size={18} color={CYAN} />
+                </Pressable>
+                <Text style={sheet.timeValue}>{pad(hour)}</Text>
+                <Pressable style={sheet.timeArrow} onPress={() => changeHour(-1)} hitSlop={12}>
+                  <Ionicons name="chevron-down" size={18} color={CYAN} />
+                </Pressable>
+              </View>
+              <Text style={sheet.timeColon}>:</Text>
+              {/* Minute */}
+              <View style={sheet.timePicker}>
+                <Pressable style={sheet.timeArrow} onPress={() => changeMinute(1)} hitSlop={12}>
+                  <Ionicons name="chevron-up" size={18} color={CYAN} />
+                </Pressable>
+                <Text style={sheet.timeValue}>{pad(minute)}</Text>
+                <Pressable style={sheet.timeArrow} onPress={() => changeMinute(-1)} hitSlop={12}>
+                  <Ionicons name="chevron-down" size={18} color={CYAN} />
+                </Pressable>
+              </View>
+            </View>
+          </View>
+
+          {/* Location */}
+          <View style={sheet.section}>
+            <Text style={sheet.label}>LOCATION</Text>
+            <TextInput
+              style={sheet.textInput}
+              value={location}
+              onChangeText={setLocation}
+              placeholder="Add location…"
+              placeholderTextColor={theme.colors.textTertiary}
+              selectionColor={CYAN}
+              autoCorrect={false}
+            />
+          </View>
+
+          {/* Description */}
+          <View style={sheet.section}>
+            <Text style={sheet.label}>NOTES</Text>
+            <TextInput
+              style={[sheet.textInput, sheet.multilineInput]}
+              value={description}
+              onChangeText={setDescription}
+              placeholder="Add notes…"
+              placeholderTextColor={theme.colors.textTertiary}
+              selectionColor={CYAN}
+              multiline
+              numberOfLines={3}
+            />
+          </View>
+
+          {/* Participants (read-only) */}
+          {event.participants.length > 0 && (
+            <View style={sheet.section}>
+              <Text style={sheet.label}>PARTICIPANTS</Text>
+              <View style={sheet.participantRow}>
+                {event.participants.map((p, i) => (
+                  <View key={i} style={sheet.participantChip}>
+                    <Ionicons name="person-outline" size={11} color={CYAN} />
+                    <Text style={sheet.participantText}>{p}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+        </ScrollView>
+      </Animated.View>
+    </Modal>
+  );
+}
+
+const sheet = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  container: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#0F0F0F',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderTopWidth: 0.5,
+    borderColor: `${CYAN}30`,
+    maxHeight: '88%',
+  },
+  handle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#333',
+    alignSelf: 'center',
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#1A1A1A',
+  },
+  headerTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: CYAN,
+    letterSpacing: 3,
+  },
+  cancelBtn: {
+    fontSize: 14,
+    color: theme.colors.textSecondary,
+  },
+  saveBtn: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: CYAN,
+  },
+  saveBtnDisabled: {
+    opacity: 0.35,
+  },
+  scroll: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 24,
+    gap: 4,
+  },
+  section: {
+    paddingVertical: 14,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#1A1A1A',
+    gap: 10,
+  },
+  label: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: theme.colors.textTertiary,
+    letterSpacing: 2,
+  },
+  textInput: {
+    color: theme.colors.textPrimary,
+    fontSize: 16,
+    paddingVertical: 0,
+    minHeight: 32,
+  },
+  multilineInput: {
+    minHeight: 64,
+    textAlignVertical: 'top',
+  },
+  dateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  arrowBtn: {
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: `${CYAN}12`,
+    borderWidth: 0.5,
+    borderColor: `${CYAN}30`,
+  },
+  dateDisplay: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 2,
+  },
+  dateDay: {
+    fontSize: 10,
+    color: CYAN,
+    fontWeight: '600',
+    letterSpacing: 1.5,
+  },
+  dateMain: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: theme.colors.textPrimary,
+  },
+  timeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    alignSelf: 'center',
+  },
+  timePicker: {
+    alignItems: 'center',
+    gap: 4,
+    minWidth: 72,
+    backgroundColor: `${CYAN}08`,
+    borderRadius: 12,
+    borderWidth: 0.5,
+    borderColor: `${CYAN}25`,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  timeArrow: {
+    padding: 4,
+  },
+  timeValue: {
+    fontSize: 28,
+    fontWeight: '600',
+    color: theme.colors.textPrimary,
+    fontVariant: ['tabular-nums'],
+    minWidth: 48,
+    textAlign: 'center',
+  },
+  timeColon: {
+    fontSize: 28,
+    fontWeight: '300',
+    color: theme.colors.textSecondary,
+    marginTop: -4,
+  },
+  participantRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  participantChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+    backgroundColor: `${CYAN}12`,
+    borderWidth: 0.5,
+    borderColor: `${CYAN}30`,
+  },
+  participantText: {
+    fontSize: 12,
+    color: CYAN,
+  },
+});
+
+// ─── Todo row ────────────────────────────────────────────────────────────────
 
 function TodoRow({
   todo,
@@ -318,6 +716,7 @@ export default function TodosScreen() {
   const [events, setEvents] = useState<ScheduledEvent[]>([]);
   const [input, setInput] = useState('');
   const inputRef = useRef<TextInput>(null);
+  const [editingEvent, setEditingEvent] = useState<ScheduledEvent | null>(null);
 
   const load = useCallback(async () => {
     const [rawTodos, rawEvents] = await Promise.all([
@@ -387,60 +786,13 @@ export default function TodosScreen() {
   const handleEditEvent = useCallback((id: string) => {
     const event = events.find((e) => e.id === id);
     if (!event) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    setEditingEvent(event);
+  }, [events]);
 
-    ActionSheetIOS.showActionSheetWithOptions(
-      {
-        title: event.title,
-        options: ['Cancel', 'Edit Title', 'Reschedule'],
-        cancelButtonIndex: 0,
-      },
-      (buttonIndex) => {
-        if (buttonIndex === 1) {
-          Alert.prompt(
-            'Edit Title',
-            undefined,
-            (newTitle) => {
-              const trimmed = (newTitle ?? '').trim();
-              if (trimmed && trimmed !== event.title) {
-                persistEvents(events.map((e) => e.id === id ? { ...e, title: trimmed } : e));
-              }
-            },
-            'plain-text',
-            event.title,
-          );
-        } else if (buttonIndex === 2) {
-          ActionSheetIOS.showActionSheetWithOptions(
-            {
-              title: 'Reschedule to…',
-              options: ['Cancel', 'Morning (9:00)', 'Afternoon (14:00)', 'Evening (18:00)', 'All Day — Today', 'All Day — Tomorrow'],
-              cancelButtonIndex: 0,
-            },
-            (slotIndex) => {
-              if (slotIndex === 0) return;
-              const base = new Date(event.datetime);
-              const today = new Date();
-              const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
-
-              let newDate: Date;
-              let allDay = false;
-
-              if (slotIndex === 1) { newDate = new Date(base); newDate.setHours(9, 0, 0, 0); }
-              else if (slotIndex === 2) { newDate = new Date(base); newDate.setHours(14, 0, 0, 0); }
-              else if (slotIndex === 3) { newDate = new Date(base); newDate.setHours(18, 0, 0, 0); }
-              else if (slotIndex === 4) { newDate = new Date(today); newDate.setHours(0, 0, 0, 0); allDay = true; }
-              else { newDate = new Date(tomorrow); newDate.setHours(0, 0, 0, 0); allDay = true; }
-
-              persistEvents(events.map((e) =>
-                e.id === id
-                  ? { ...e, datetime: newDate.toISOString(), calendarSynced: false }
-                  : e,
-              ));
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-            },
-          );
-        }
-      },
-    );
+  const handleSaveEvent = useCallback((updated: ScheduledEvent) => {
+    persistEvents(events.map((e) => e.id === updated.id ? updated : e));
+    setEditingEvent(null);
   }, [events, persistEvents]);
 
   const handleSyncTodo = useCallback((id: string) => {
@@ -619,6 +971,12 @@ export default function TodosScreen() {
           </View>
         }
       />
+      <EventEditSheet
+        event={editingEvent}
+        visible={editingEvent !== null}
+        onSave={handleSaveEvent}
+        onClose={() => setEditingEvent(null)}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -740,6 +1098,10 @@ const styles = StyleSheet.create({
     color: CYAN,
     marginTop: 3,
     opacity: 0.8,
+  },
+  editBtn: {
+    padding: 4,
+    marginRight: 2,
   },
   calSyncBtn: {
     padding: 4,

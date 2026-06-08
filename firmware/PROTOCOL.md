@@ -23,7 +23,7 @@ Standard BLE GATT profile. The pendant acts as a **peripheral**; the iOS app act
 Used when BLE range is insufficient or for bulk data transfer.
 
 - Pendant connects to local network (or iOS Personal Hotspot).
-- Audio chunks are sent as raw HTTP POST to `/v1/process-audio-raw` on the backend.
+- Audio chunks are sent as raw HTTP POST to `/v1/process-audio-pcm` on the backend.
 - No base64 encoding — raw binary body to minimize CPU load and bandwidth.
 
 ---
@@ -40,7 +40,7 @@ Used when BLE range is insufficient or for bulk data transfer.
 
 **BLE path:** firmware captures I2S → fills 3 200-byte buffer → sends as NOTIFY on Audio characteristic → iOS `processBLEAudioBuffer()` reassembles → forwards to backend.
 
-**WiFi path:** firmware captures I2S → fills 3 200-byte buffer → HTTP POST binary body to `/v1/process-audio-raw` with `X-User-Id` header.
+**WiFi path:** firmware captures I2S → fills 3 200-byte buffer → HTTP POST binary body to `/v1/process-audio-pcm` with `X-User-Id` header.
 
 ---
 
@@ -103,7 +103,7 @@ Wake sources:
 |---------------------|-----------------------------------|---------------------------------------------|
 | BLE connection      | `app/services/BLEService.ts`      | `connect()`, `startAudioStream()`           |
 | Audio buffer        | `app/services/BLEService.ts`      | `processBLEAudioBuffer(buffer)`             |
-| Backend forwarding  | `app/services/AudioService.ts`    | POST to `/v1/process-audio-raw`             |
+| Backend forwarding  | `app/services/AudioService.ts`    | POST to `/v1/process-audio-pcm`             |
 | UI state            | `app/app/(tabs)/index.tsx`        | Show BLE indicator when connected           |
 
 ---

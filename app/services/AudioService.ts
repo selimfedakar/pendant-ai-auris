@@ -46,6 +46,7 @@ class AudioService {
   private vadSubscription: { remove: () => void } | null = null;
   private meteringCallback: ((db: number) => void) | null = null;
   private recordingStartTime = 0;
+  private playToken = 0;
 
   setMeteringCallback(cb: ((db: number) => void) | null): void {
     this.meteringCallback = cb;
@@ -147,12 +148,22 @@ class AudioService {
 
   async playFromUri(uri: string): Promise<void> {
     await this.stopPlayback();
+    const myToken = ++this.playToken;
 
-    await setAudioModeAsync({
-      allowsRecording: false,
-      playsInSilentMode: true,
-      interruptionMode: 'mixWithOthers',
-    });
+    // Set audio mode with retry — after a crash the iOS audio session may be inconsistent.
+    try {
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true, interruptionMode: 'mixWithOthers' });
+    } catch {
+      await new Promise(r => setTimeout(r, 300));
+      try {
+        await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true, interruptionMode: 'mixWithOthers' });
+      } catch {
+        console.warn('[Audio] setAudioModeAsync failed twice — skipping playback');
+        return;
+      }
+    }
+
+    if (myToken !== this.playToken) return; // stopPlayback was called while we were awaiting
 
     // Give iOS 100ms to fully commit the audio session category change
     // (allowsRecording: false releases the recording session so the speaker
@@ -160,28 +171,50 @@ class AudioService {
     // the earpiece on the first play after a recording session).
     await new Promise(r => setTimeout(r, 100));
 
-    const player = createAudioPlayer({ uri });
+    let player: ReturnType<typeof createAudioPlayer>;
+    try {
+      player = createAudioPlayer({ uri });
+    } catch (e) {
+      console.warn('[Audio] createAudioPlayer failed:', e);
+      return;
+    }
+
+    if (myToken !== this.playToken) {
+      try { player.remove(); } catch { /* ignore */ }
+      return;
+    }
+
     this.player = player;
 
     await new Promise<void>((resolve) => {
-      // 60s safety timeout — if didJustFinish never fires (empty/corrupt file), resolve anyway.
+      // 15s safety timeout — if didJustFinish never fires (empty/corrupt file), resolve anyway.
       const timeout = setTimeout(() => {
         sub.remove();
         resolve();
-      }, 60000);
+      }, 15000);
 
       const sub = player.addListener(PLAYBACK_STATUS_UPDATE, (status: any) => {
-        if (status.didJustFinish) {
+        if (status.didJustFinish || myToken !== this.playToken) {
           clearTimeout(timeout);
           sub.remove();
           resolve();
         }
       });
-      player.play();
+
+      try {
+        player.play();
+      } catch (e) {
+        console.warn('[Audio] player.play() failed:', e);
+        clearTimeout(timeout);
+        sub.remove();
+        resolve();
+      }
     });
 
-    try { player.remove(); } catch { /* ignore */ }
-    this.player = null;
+    if (myToken === this.playToken) {
+      try { player.remove(); } catch { /* ignore */ }
+      this.player = null;
+    }
   }
 
   async stopPlayback(): Promise<void> {

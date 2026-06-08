@@ -521,6 +521,8 @@ export default function HomeScreen() {
         setOrbState('speaking');
         if (audioUri) {
           audioService.playFromUri(audioUri).catch((e) => console.warn('[Auris] TTS playback:', e));
+        } else {
+          console.warn('[Audio] no URI — TTS skipped or empty');
         }
         await addStreamingMessage(reply);  // typewriter controls orb timing
       }

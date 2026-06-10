@@ -14,14 +14,38 @@
       "infoPlist": {
         "UIBackgroundModes": [
           "audio",
-          "fetch"
+          "fetch",
+          "bluetooth-central"
         ],
         "NSMicrophoneUsageDescription": "Auris needs microphone access to listen and respond.",
-        "NSLocationWhenInUseUsageDescription": "Auris uses your location to suggest nearby places.",
+        "NSBluetoothAlwaysUsageDescription": "Auris connects to your Auris Pendant via Bluetooth.",
+        "NSLocationWhenInUseUsageDescription": "Auris uses your location for context-aware responses.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Auris uses your location for context-aware ambient intelligence.",
         "NSCalendarsUsageDescription": "Auris can add events to your calendar from conversations.",
         "NSCalendarsFullAccessUsageDescription": "Auris can read and add events to your calendar.",
         "NSCameraUsageDescription": "Auris uses the camera to understand your environment.",
+        "NSMotionUsageDescription": "Auris uses motion data to detect pendant activity.",
+        "NSRemindersUsageDescription": "Auris can create reminders from your conversations.",
         "ITSAppUsesNonExemptEncryption": false
+      },
+      "entitlements": {
+        "aps-environment": "production"
+      },
+      "privacyManifests": {
+        "NSPrivacyCollectedDataTypes": [
+          {
+            "NSPrivacyCollectedDataType": "NSPrivacyCollectedDataTypeAudioData",
+            "NSPrivacyCollectedDataTypeLinked": false,
+            "NSPrivacyCollectedDataTypeTracking": false,
+            "NSPrivacyCollectedDataTypePurposes": ["NSPrivacyCollectedDataTypePurposeAppFunctionality"]
+          },
+          {
+            "NSPrivacyCollectedDataType": "NSPrivacyCollectedDataTypePhotosOrVideos",
+            "NSPrivacyCollectedDataTypeLinked": false,
+            "NSPrivacyCollectedDataTypeTracking": false,
+            "NSPrivacyCollectedDataTypePurposes": ["NSPrivacyCollectedDataTypePurposeAppFunctionality"]
+          }
+        ]
       }
     },
     "android": {

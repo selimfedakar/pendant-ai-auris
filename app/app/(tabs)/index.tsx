@@ -33,6 +33,7 @@ import { notificationService } from '@/services/NotificationService';
 import { identityService } from '@/services/IdentityService';
 import { calendarService } from '@/services/CalendarService';
 import { gmailService } from '@/services/GmailService';
+import { bleService, BLEConnectionState } from '@/services/BLEService';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 
@@ -78,6 +79,7 @@ export default function HomeScreen() {
   const isCapturingRef = useRef(false);
   const userIdRef = useRef<string>('user-local');
 
+  const [bleState, setBleState] = useState<BLEConnectionState>(bleService.getConnectionState());
   const [contextualSheetVisible, setContextualSheetVisible] = useState(false);
   const [activeModule, setActiveModule] = useState<string>('visual');
   const [audioUnavailable, setAudioUnavailable] = useState(false);
@@ -259,6 +261,10 @@ export default function HomeScreen() {
 
   useEffect(() => {
     identityService.getUserId().then((id) => { userIdRef.current = id; });
+  }, []);
+
+  useEffect(() => {
+    bleService.onStateChange(setBleState);
   }, []);
 
   useEffect(() => {
@@ -656,7 +662,7 @@ export default function HomeScreen() {
       if (gmailService.isAuthenticated()) {
         addStreamingMessage('Email Intel activated. Tap the orb to analyze your inbox.');
       } else {
-        addStreamingMessage('Email Intel selected. Tap the orb to connect Gmail and start analyzing your inbox.');
+        addStreamingMessage('Email Intel is coming soon. Stay tuned for Gmail inbox analysis.');
       }
     }
   }, [addStreamingMessage]);
@@ -679,6 +685,21 @@ export default function HomeScreen() {
     <View style={[styles.container, { paddingTop: insets.top }]}>
       {/* Header */}
       <View style={styles.header}>
+        <Pressable
+          style={styles.pendantChip}
+          onPress={() => {
+            if (bleState !== 'connected') {
+              bleService.scanAndConnect().catch(() => {});
+            }
+          }}
+        >
+          <Text style={[styles.pendantDot, bleState === 'connected' ? styles.pendantDotConnected : styles.pendantDotOff]}>
+            {bleState === 'connected' ? '●' : '○'}
+          </Text>
+          <Text style={styles.pendantLabel}>
+            {bleState === 'scanning' || bleState === 'connecting' ? 'PAIRING…' : 'PENDANT'}
+          </Text>
+        </Pressable>
         <Text style={styles.wordmark}>AURIS</Text>
         <Text style={styles.wordmarkSub}> AI</Text>
         <Pressable style={[styles.modeChip, { borderColor: `${modeColor}50` }]} onPress={toggleMode}>
@@ -762,8 +783,8 @@ export default function HomeScreen() {
       {/* Orb hint */}
       <View style={styles.hintRow}>
         {orbState === 'idle' && activeModule === 'email' && (
-          <Text style={[styles.hint, { color: '#6366F1' }]}>
-            {gmailService.isAuthenticated() ? 'tap to analyze inbox' : 'tap to connect gmail'}
+          <Text style={[styles.hint, { color: '#6366F1', fontStyle: gmailService.isAuthenticated() ? 'normal' : 'italic' }]}>
+            {gmailService.isAuthenticated() ? 'tap to analyze inbox' : 'Email Intel · Coming Soon'}
           </Text>
         )}
         {orbState === 'idle' && activeModule === 'calendar' && (
@@ -912,6 +933,16 @@ const styles = StyleSheet.create({
   },
   wordmark: { fontSize: 16, fontWeight: '700', color: theme.colors.gold, letterSpacing: 10 },
   wordmarkSub: { fontSize: 11, fontWeight: '400', color: theme.colors.textSecondary, letterSpacing: 4 },
+  pendantChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20,
+    borderWidth: 1, borderColor: 'rgba(201, 168, 76, 0.30)',
+    backgroundColor: '#1A1A1A', position: 'absolute', left: 20,
+  },
+  pendantDot: { fontSize: 9 },
+  pendantDotConnected: { color: '#00FF88' },
+  pendantDotOff: { color: '#555' },
+  pendantLabel: { fontSize: 11, fontWeight: '600', color: '#fff', letterSpacing: 1.2 },
   modeChip: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
     paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20,

@@ -10,6 +10,7 @@ import {
   ActionSheetIOS,
   Image,
   Modal,
+  Linking,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -17,7 +18,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
 import { PERSONALITIES, PersonalityId, PersonalityMode } from '@/constants/personalities';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { profileService } from '@/services/ProfileService';
+import { identityService } from '@/services/IdentityService';
+
+const BACKEND_URL = 'https://auris-backend.aurisapi.workers.dev';
+const API_KEY = process.env.EXPO_PUBLIC_AURIS_API_KEY ?? '';
 
 function PersonalityCard({
   personality,
@@ -129,6 +135,39 @@ export default function ProfileScreen() {
     }
   }, []);
 
+  const handleClearData = useCallback(async () => {
+    const localKeys = [
+      '@auris:conversation_history',
+      '@auris:offline_queue',
+      '@auris:history',
+    ];
+    // Always clear local data
+    await AsyncStorage.multiRemove(localKeys).catch(() => {});
+
+    try {
+      const userId = await identityService.getUserId();
+      const res = await fetch(`${BACKEND_URL}/v1/conversations/${userId}`, {
+        method: 'DELETE',
+        headers: { 'X-Auris-Key': API_KEY },
+      });
+      if (!res.ok) throw new Error(`Server responded ${res.status}`);
+      Alert.alert('Done', 'All your data has been cleared.');
+    } catch {
+      Alert.alert('Error', 'Failed to clear server data. Local data cleared.');
+    }
+  }, []);
+
+  const confirmClearData = useCallback(() => {
+    Alert.alert(
+      'Clear All Data',
+      'This will delete your conversation history from Auris servers and this device. This cannot be undone.',
+      [
+        { text: 'Cancel' },
+        { text: 'Delete', style: 'destructive', onPress: handleClearData },
+      ],
+    );
+  }, [handleClearData]);
+
   return (
     <>
       <ScrollView
@@ -208,6 +247,32 @@ export default function ProfileScreen() {
         <Pressable style={styles.saveButton} onPress={handleSave}>
           <Text style={styles.saveText}>SAVE</Text>
         </Pressable>
+
+        {/* Danger zone */}
+        <View style={styles.dangerSection}>
+          <Text style={styles.sectionLabel}>DANGER ZONE</Text>
+          <Pressable
+            style={({ pressed }) => [styles.clearDataBtn, pressed && { opacity: 0.7 }]}
+            onPress={confirmClearData}
+          >
+            <Ionicons name="trash-outline" size={14} color="#FF4444" />
+            <Text style={styles.clearDataText}>Clear All Data</Text>
+          </Pressable>
+        </View>
+
+        {/* Legal links */}
+        <View style={styles.legalSection}>
+          <View style={styles.legalSeparator} />
+          <View style={styles.legalLinks}>
+            <Pressable onPress={() => Linking.openURL('https://aurisai.com/privacy')}>
+              <Text style={styles.legalLink}>Privacy Policy</Text>
+            </Pressable>
+            <Text style={styles.legalDivider}>|</Text>
+            <Pressable onPress={() => Linking.openURL('https://aurisai.com/terms')}>
+              <Text style={styles.legalLink}>Terms of Service</Text>
+            </Pressable>
+          </View>
+        </View>
       </ScrollView>
 
       {/* Camera modal for profile photo */}
@@ -383,6 +448,50 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     letterSpacing: 3,
+  },
+  // Danger section
+  dangerSection: {
+    gap: 12,
+  },
+  clearDataBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: '#FF444430',
+    backgroundColor: '#FF444410',
+  },
+  clearDataText: {
+    color: '#FF4444',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  // Legal links
+  legalSection: {
+    alignItems: 'center',
+    gap: 12,
+    paddingBottom: 8,
+  },
+  legalSeparator: {
+    height: 0.5,
+    backgroundColor: theme.colors.border,
+    width: '100%',
+  },
+  legalLinks: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  legalLink: {
+    color: '#666',
+    fontSize: 12,
+  },
+  legalDivider: {
+    color: '#444',
+    fontSize: 12,
   },
   // Camera modal
   cameraModal: { flex: 1, backgroundColor: '#000' },

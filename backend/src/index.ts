@@ -17,7 +17,7 @@ app.use(
   "*",
   cors({
     origin: "*",
-    allowMethods: ["GET", "POST", "OPTIONS"],
+    allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
     allowHeaders: ["Content-Type", "Authorization", "X-Auris-Key", "X-User-Id", "X-Personality", "X-User-Name"],
   })
 );
@@ -25,11 +25,9 @@ app.use(
 // Auth middleware — applied only to /v1/* routes
 app.use("/v1/*", async (c, next) => {
   const expectedKey = c.env.AURIS_API_KEY;
-  if (expectedKey) {
-    const provided = c.req.header("X-Auris-Key");
-    if (provided !== expectedKey) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
+  const provided = c.req.header("X-Auris-Key");
+  if (!expectedKey || provided !== expectedKey) {
+    return c.json({ error: "Unauthorized" }, 401);
   }
   await next();
 });
@@ -166,10 +164,14 @@ async function generateReply(
 ): Promise<ReplyResult> {
   const basePrompt = PERSONALITY_PROMPTS[personality] ?? PERSONALITY_PROMPTS.companion;
 
+  const safeUserName = userName?.slice(0, 100) ?? '';
+  const safeUserProfession = userProfession?.slice(0, 100) ?? '';
+  const safeContextData = contextData?.slice(0, 2000);
+
   const contextLines: string[] = [basePrompt];
-  if (userName) contextLines.push(`The user's name is ${userName}.`);
-  if (userProfession) contextLines.push(`Their profession is ${userProfession}.`);
-  if (contextData) contextLines.push(`Relevant context for this conversation: ${contextData}`);
+  if (safeUserName) contextLines.push(`The user's name is ${safeUserName}.`);
+  if (safeUserProfession) contextLines.push(`Their profession is ${safeUserProfession}.`);
+  if (safeContextData) contextLines.push(`Relevant context for this conversation: ${safeContextData}`);
   contextLines.push("Respond in the same language the user speaks.");
   contextLines.push(detectionSuffix());
 
@@ -469,10 +471,13 @@ app.post("/v1/process-audio-stream-json", async (c) => {
     if (!transcript) return c.json({ error: "No speech detected in audio" }, 422);
 
     const basePrompt = PERSONALITY_PROMPTS[personality] ?? PERSONALITY_PROMPTS.companion;
+    const safeUserName2 = userName?.slice(0, 100) ?? '';
+    const safeUserProfession2 = userProfession?.slice(0, 100) ?? '';
+    const safeContextData2 = contextData?.slice(0, 2000);
     const contextLines: string[] = [basePrompt];
-    if (userName) contextLines.push(`The user's name is ${userName}.`);
-    if (userProfession) contextLines.push(`Their profession is ${userProfession}.`);
-    if (contextData) contextLines.push(`Relevant context for this conversation: ${contextData}`);
+    if (safeUserName2) contextLines.push(`The user's name is ${safeUserName2}.`);
+    if (safeUserProfession2) contextLines.push(`Their profession is ${safeUserProfession2}.`);
+    if (safeContextData2) contextLines.push(`Relevant context for this conversation: ${safeContextData2}`);
     contextLines.push("Respond in the same language the user speaks.");
     contextLines.push(detectionSuffix());
     const systemPrompt = contextLines.join(" ");
@@ -561,9 +566,9 @@ app.post("/v1/summarize", async (c) => {
     return c.json({ error: "Invalid JSON body" }, 400);
   }
 
-  const context = body.context ?? "";
+  const context = (body.context ?? "").slice(0, 2000);
   const personality = (body.personality ?? "companion").toLowerCase();
-  const userName = body.user_name ?? "";
+  const userName = (body.user_name ?? "").slice(0, 100);
 
   if (!context) return c.json({ error: "Missing context" }, 400);
 
@@ -754,9 +759,11 @@ app.post("/v1/process-audio-stream", async (c) => {
     }
 
     const basePrompt = PERSONALITY_PROMPTS[personality] ?? PERSONALITY_PROMPTS.companion;
+    const safeUserName4 = userName?.slice(0, 100) ?? '';
+    const safeUserProfession4 = userProfession?.slice(0, 100) ?? '';
     const contextLines: string[] = [basePrompt];
-    if (userName) contextLines.push(`The user's name is ${userName}.`);
-    if (userProfession) contextLines.push(`Their profession is ${userProfession}.`);
+    if (safeUserName4) contextLines.push(`The user's name is ${safeUserName4}.`);
+    if (safeUserProfession4) contextLines.push(`Their profession is ${safeUserProfession4}.`);
     contextLines.push("Respond in the same language the user speaks.");
     contextLines.push(detectionSuffix());
     const systemPrompt = contextLines.join(" ");
@@ -992,6 +999,17 @@ app.post("/v1/process-audio-pcm", async (c) => {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("process-audio-pcm error:", message);
     return c.json({ error: message }, 500);
+  }
+});
+
+// Delete conversation history for a user
+app.delete("/v1/conversations/:userId", async (c) => {
+  const userId = c.req.param("userId");
+  try {
+    await c.env.CONVERSATIONS.delete(userId);
+    return c.json({ success: true, userId });
+  } catch {
+    return c.json({ success: false, error: "Failed to delete" }, 500);
   }
 });
 

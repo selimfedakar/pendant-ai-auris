@@ -22,7 +22,7 @@
 
 #include <Arduino.h>
 #include <NimBLEDevice.h>
-#include <driver/i2s_pdm.h>
+#include <driver/i2s.h>
 #include <esp_sleep.h>
 
 // Replace per unit before flashing — sent as X-User-Id on the WiFi path
@@ -44,7 +44,6 @@ static const char* SVC_UUID   = "12345678-1234-1234-1234-123456789abc";
 static const char* AUDIO_UUID = "12345678-1234-1234-1234-123456789abd";
 static const char* CTRL_UUID  = "12345678-1234-1234-1234-123456789abe";
 
-static i2s_chan_handle_t      rx_handle  = nullptr;
 static NimBLEServer*          pServer    = nullptr;
 static NimBLECharacteristic*  pAudioChar = nullptr;
 static NimBLECharacteristic*  pCtrlChar  = nullptr;
@@ -60,21 +59,34 @@ static DRAM_ATTR int16_t gAudioBuf[AUDIO_PER_NOTIFY / sizeof(int16_t)];
 static uint8_t           gPacket[NOTIFY_BYTES];
 
 static void mic_init() {
-    i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
-    ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, NULL, &rx_handle));
-
-    i2s_pdm_rx_config_t pdm_cfg = {
-        .clk_cfg  = I2S_PDM_RX_CLK_DEFAULT_CONFIG(16000),
-        .slot_cfg = I2S_PDM_RX_SLOT_DEFAULT_CONFIG(
-                        I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
-        .gpio_cfg = {
-            .clk          = PDM_CLK_PIN,
-            .din          = PDM_DATA_PIN,
-            .invert_flags = { .clk_inv = false },
-        },
+    i2s_config_t cfg = {
+        .mode                 = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_PDM),
+        .sample_rate          = 16000,
+        .bits_per_sample      = I2S_BITS_PER_SAMPLE_16BIT,
+        .channel_format       = I2S_CHANNEL_FMT_ONLY_LEFT,
+        .communication_format = I2S_COMM_FORMAT_STAND_PCM_SHORT,
+        .intr_alloc_flags     = ESP_INTR_FLAG_LEVEL1,
+        .dma_buf_count        = 8,
+        .dma_buf_len          = 64,
+        .use_apll             = false,
+        .tx_desc_auto_clear   = false,
+        .fixed_mclk           = 0,
     };
-    ESP_ERROR_CHECK(i2s_channel_init_pdm_rx_mode(rx_handle, &pdm_cfg));
-    ESP_ERROR_CHECK(i2s_channel_enable(rx_handle));
+    if (i2s_driver_install(I2S_NUM_0, &cfg, 0, NULL) != ESP_OK) {
+        Serial.println("[MIC] driver install failed — audio disabled");
+        return;
+    }
+    i2s_pin_config_t pin_cfg = {
+        .mck_io_num   = I2S_PIN_NO_CHANGE,
+        .bck_io_num   = I2S_PIN_NO_CHANGE,
+        .ws_io_num    = (int)PDM_CLK_PIN,
+        .data_out_num = I2S_PIN_NO_CHANGE,
+        .data_in_num  = (int)PDM_DATA_PIN,
+    };
+    if (i2s_set_pin(I2S_NUM_0, &pin_cfg) != ESP_OK) {
+        Serial.println("[MIC] set pin failed — audio disabled");
+        return;
+    }
     Serial.println("[MIC] PDM ready  CLK=GPIO42  DATA=GPIO41");
 }
 
@@ -96,7 +108,7 @@ class ServerCB : public NimBLEServerCallbacks {
 
 class CtrlCB : public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic* pChar, NimBLEConnInfo&) override {
-        if (pChar->getDataLength() < 1) return;
+        if (pChar->getValue().size() < 1) return;
         const uint8_t cmd = pChar->getValue().data()[0];
         switch (cmd) {
             case 0x01:
@@ -135,7 +147,6 @@ static void ble_init() {
 
     NimBLEAdvertising* pAdv = NimBLEDevice::getAdvertising();
     pAdv->addServiceUUID(SVC_UUID);
-    pAdv->setScanResponse(true);
     pAdv->start();
 
     Serial.printf("[BLE] advertising as 'AurisPendant'  id=%s\n", DEVICE_UUID);
@@ -144,8 +155,7 @@ static void ble_init() {
 static void enter_deep_sleep() {
     Serial.println("[PWR] deep sleep — press BOOT to wake");
     Serial.flush();
-    i2s_channel_disable(rx_handle);
-    i2s_del_channel(rx_handle);
+    i2s_driver_uninstall(I2S_NUM_0);
     NimBLEDevice::deinit(true);
     esp_sleep_enable_ext0_wakeup(BTN_BOOT_PIN, 0);
     esp_deep_sleep_start();
@@ -153,11 +163,11 @@ static void enter_deep_sleep() {
 
 static void stream_chunk() {
     if (!gConnected || !gStreaming) return;
-    if (pAudioChar->getSubscribedCount() == 0) return;
+    if (pServer->getConnectedCount() == 0) return;
 
     size_t bytes_read = 0;
-    const esp_err_t err = i2s_channel_read(
-        rx_handle, gAudioBuf, AUDIO_PER_NOTIFY,
+    const esp_err_t err = i2s_read(
+        I2S_NUM_0, gAudioBuf, AUDIO_PER_NOTIFY,
         &bytes_read, pdMS_TO_TICKS(200));
     if (err != ESP_OK || bytes_read < AUDIO_PER_NOTIFY) return;
 
@@ -187,7 +197,7 @@ void loop() {
         gLastConnMs = millis();
         gStreaming ? stream_chunk() : delay(10);
     } else {
-        if (millis() - gLastConnMs >= IDLE_SLEEP_MS) enter_deep_sleep();
+        // deep sleep disabled for prototyping
         delay(100);
     }
 }

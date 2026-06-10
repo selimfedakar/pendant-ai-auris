@@ -1,7 +1,8 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 
-const TOKEN_KEY = '@auris:gmail_token';
-const TOKEN_EXPIRY_KEY = '@auris:gmail_token_expiry';
+// SecureStore keys must not contain special characters like ':' or '@'
+const TOKEN_KEY = 'auris_gmail_token';
+const TOKEN_EXPIRY_KEY = 'auris_gmail_token_expiry';
 const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me';
 
 type EmailSummary = {
@@ -16,8 +17,8 @@ class GmailService {
 
   async loadToken(): Promise<void> {
     const [token, expiry] = await Promise.all([
-      AsyncStorage.getItem(TOKEN_KEY),
-      AsyncStorage.getItem(TOKEN_EXPIRY_KEY),
+      SecureStore.getItemAsync(TOKEN_KEY),
+      SecureStore.getItemAsync(TOKEN_EXPIRY_KEY),
     ]);
     if (token && expiry && Date.now() < parseInt(expiry, 10)) {
       this.accessToken = token;
@@ -29,8 +30,8 @@ class GmailService {
     this.accessToken = token;
     this.tokenExpiry = Date.now() + expiresIn * 1000;
     await Promise.all([
-      AsyncStorage.setItem(TOKEN_KEY, token),
-      AsyncStorage.setItem(TOKEN_EXPIRY_KEY, String(this.tokenExpiry)),
+      SecureStore.setItemAsync(TOKEN_KEY, token),
+      SecureStore.setItemAsync(TOKEN_EXPIRY_KEY, String(this.tokenExpiry)),
     ]);
   }
 
@@ -38,8 +39,8 @@ class GmailService {
     this.accessToken = null;
     this.tokenExpiry = 0;
     await Promise.all([
-      AsyncStorage.removeItem(TOKEN_KEY),
-      AsyncStorage.removeItem(TOKEN_EXPIRY_KEY),
+      SecureStore.deleteItemAsync(TOKEN_KEY),
+      SecureStore.deleteItemAsync(TOKEN_EXPIRY_KEY),
     ]);
   }
 

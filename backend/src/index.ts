@@ -614,6 +614,28 @@ app.post("/v1/summarize", async (c) => {
 // Admin code (003) is hardcoded server-side. Customer codes (AUR-XXXXXX) are
 // stored in the CONVERSATIONS KV under the "code:" prefix.
 app.post("/v1/validate-code", async (c) => {
+  // Rate limit: max 5 attempts per IP per 10-minute sliding window (KV-backed).
+  const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
+  const rlKey = `ratelimit:validate-code:${ip}`;
+  const now = Date.now();
+  const WINDOW_MS = 10 * 60 * 1000;
+  const MAX_ATTEMPTS = 5;
+  let rl = { count: 0, windowStart: now };
+  const rlRaw = await c.env.CONVERSATIONS.get(rlKey);
+  if (rlRaw) {
+    try {
+      const parsed = JSON.parse(rlRaw) as { count: number; windowStart: number };
+      if (now - parsed.windowStart < WINDOW_MS) rl = parsed;
+    } catch {
+      // Corrupt entry — start a fresh window.
+    }
+  }
+  if (rl.count >= MAX_ATTEMPTS) {
+    return c.json({ error: "Too many attempts. Please wait a few minutes." }, 429);
+  }
+  rl.count += 1;
+  await c.env.CONVERSATIONS.put(rlKey, JSON.stringify(rl), { expirationTtl: 700 });
+
   let body: { code?: string };
   try {
     body = await c.req.json();

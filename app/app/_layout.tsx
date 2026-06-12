@@ -4,10 +4,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import * as SplashScreen from 'expo-splash-screen';
 import React, { useEffect, useState } from 'react';
 import { View, Text } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { deviceCodeService } from '../services/DeviceCodeService';
-
-const ONBOARDING_KEY = '@auris:onboarding_complete';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -50,19 +47,13 @@ export default function RootLayout() {
   // router.replace called before navState.key is set is a silent no-op in Expo Router.
   useEffect(() => {
     if (!navState?.key || codeStatus === 'pending') return;
+    // No access code yet → run onboarding, which ends with the activation gate.
+    // Once a valid code (admin 003 or a customer AUR-XXXXXX) is stored, the app
+    // boots straight into the tabs on every subsequent launch.
     if (codeStatus === 'missing') {
-      router.replace('/activate');
-      SplashScreen.hideAsync();
-      return;
+      router.replace('/onboarding');
     }
-    // Code found — check if onboarding has been completed
-    AsyncStorage.getItem(ONBOARDING_KEY).then((value) => {
-      if (!value) {
-        router.replace('/onboarding');
-      }
-      // If value is set, the navigator stays on /(tabs) (default Stack route)
-      SplashScreen.hideAsync();
-    });
+    SplashScreen.hideAsync();
   }, [navState?.key, codeStatus]);
 
   return (

@@ -21,11 +21,13 @@
         "NSBluetoothAlwaysUsageDescription": "Auris connects to your Auris Pendant via Bluetooth.",
         "NSLocationWhenInUseUsageDescription": "Auris uses your location for context-aware responses.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Auris uses your location for context-aware ambient intelligence.",
+        "NSLocationAlwaysUsageDescription": "Auris uses your location for context-aware ambient intelligence.",
         "NSCalendarsUsageDescription": "Auris can add events to your calendar from conversations.",
         "NSCalendarsFullAccessUsageDescription": "Auris can read and add events to your calendar.",
         "NSCameraUsageDescription": "Auris uses the camera to understand your environment.",
         "NSMotionUsageDescription": "Auris uses motion data to detect pendant activity.",
         "NSRemindersUsageDescription": "Auris can create reminders from your conversations.",
+        "NSRemindersFullAccessUsageDescription": "Auris can read and create reminders from your conversations.",
         "ITSAppUsesNonExemptEncryption": false
       },
       "entitlements": {
@@ -44,6 +46,24 @@
             "NSPrivacyCollectedDataTypeLinked": false,
             "NSPrivacyCollectedDataTypeTracking": false,
             "NSPrivacyCollectedDataTypePurposes": ["NSPrivacyCollectedDataTypePurposeAppFunctionality"]
+          }
+        ],
+        "NSPrivacyAccessedAPITypes": [
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults",
+            "NSPrivacyAccessedAPITypeReasons": ["CA92.1"]
+          },
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryFileTimestamp",
+            "NSPrivacyAccessedAPITypeReasons": ["C617.1"]
+          },
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategorySystemBootTime",
+            "NSPrivacyAccessedAPITypeReasons": ["35F9.1"]
+          },
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryDiskSpace",
+            "NSPrivacyAccessedAPITypeReasons": ["E174.1"]
           }
         ]
       }
@@ -96,7 +116,19 @@
         }
       ],
       "expo-web-browser",
-      "expo-splash-screen",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#050505",
+          "dark": {
+            "image": "./assets/splash-icon.png",
+            "backgroundColor": "#050505"
+          }
+        }
+      ],
       "react-native-ble-plx"
     ],
     "extra": {

@@ -8,6 +8,7 @@ import {
 import AudioModule from 'expo-audio/build/AudioModule';
 // These event keys are not re-exported by expo-audio's main index — import directly.
 import { RECORDING_STATUS_UPDATE, PLAYBACK_STATUS_UPDATE } from 'expo-audio/build/AudioEventKeys';
+import * as Speech from 'expo-speech';
 
 const VAD_SILENCE_DB = -45;
 const VAD_SILENCE_MS = 1500;
@@ -223,6 +224,44 @@ class AudioService {
       try { (this.player as any).remove?.(); } catch { /* ignore */ }
       this.player = null;
     }
+    // Also halt any in-flight on-device speech fallback.
+    try { Speech.stop(); } catch { /* ignore */ }
+  }
+
+  // On-device TTS fallback. Used when the backend returns no audio
+  // (X-TTS-Skipped or empty body) so the phone still speaks the reply.
+  // When the pendant ships, voice will route through its speaker instead.
+  async speakText(text: string): Promise<void> {
+    const clean = text?.trim();
+    if (!clean) return;
+
+    await this.stopPlayback();
+
+    // Ensure the speaker route is active even if the phone is on silent.
+    try {
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true, interruptionMode: 'mixWithOthers' });
+    } catch { /* ignore */ }
+
+    // Pick a locale so non-English replies are not mangled by the default voice.
+    const language = /[çğıöşüÇĞİÖŞÜ]/.test(clean) ? 'tr-TR' : 'en-US';
+
+    await new Promise<void>((resolve) => {
+      // Safety timeout — if no callback fires, resolve so the orb never stays stuck.
+      const timeout = setTimeout(resolve, 20000);
+      const done = () => { clearTimeout(timeout); resolve(); };
+      try {
+        Speech.speak(clean, {
+          language,
+          rate: 1.0,
+          pitch: 1.0,
+          onDone: done,
+          onStopped: done,
+          onError: done,
+        });
+      } catch {
+        done();
+      }
+    });
   }
 
   isRecording(): boolean {

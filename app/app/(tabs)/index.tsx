@@ -480,11 +480,13 @@ export default function HomeScreen() {
       const events = Array.isArray(result.events) ? result.events : [];
       const audioUri = result.audioUri ?? '';
 
-      console.log('[Auris] transcript:', JSON.stringify(transcript));
-      console.log('[Auris] reply:', JSON.stringify(reply));
-      console.log('[Auris] todos:', JSON.stringify(todos));
-      console.log('[Auris] events:', JSON.stringify(events));
-      console.log('[Auris] audioUri:', audioUri);
+      if (__DEV__) {
+        console.log('[Auris] transcript:', JSON.stringify(transcript));
+        console.log('[Auris] reply:', JSON.stringify(reply));
+        console.log('[Auris] todos:', JSON.stringify(todos));
+        console.log('[Auris] events:', JSON.stringify(events));
+        console.log('[Auris] audioUri:', audioUri);
+      }
 
       // Guard: in vision mode, reject ambient noise / social noise captures.
       // If the transcript is 3 words or fewer AND the reply is very short (< 60 chars),
@@ -526,9 +528,12 @@ export default function HomeScreen() {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
         setOrbState('speaking');
         if (audioUri) {
+          // Backend (cloud) TTS available — play the high-quality audio.
           audioService.playFromUri(audioUri).catch((e) => console.warn('[Auris] TTS playback:', e));
         } else {
-          console.warn('[Audio] no URI — TTS skipped or empty');
+          // Backend TTS unavailable — fall back to on-device speech so the
+          // phone still speaks the reply out loud, concurrently with the typewriter.
+          audioService.speakText(reply).catch((e) => console.warn('[Auris] device TTS:', e));
         }
         await addStreamingMessage(reply);  // typewriter controls orb timing
       }
@@ -536,7 +541,8 @@ export default function HomeScreen() {
       // Typewriter finished — ready for next input; audio continues in background
       setOrbState('idle');
       isProcessingRef.current = false;
-      setAudioUnavailable(!audioUri && !!reply);
+      // Auris now always speaks (cloud TTS or on-device fallback), so no "unavailable" state.
+      setAudioUnavailable(false);
     } catch (err: any) {
       const msg = String(err?.message ?? 'Something went wrong');
       setError(msg);

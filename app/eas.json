@@ -21,7 +21,14 @@
     "preview": {
       "distribution": "internal"
     },
-    "production": {}
+    "production": {
+      "autoIncrement": true,
+      "channel": "production",
+      "distribution": "store",
+      "ios": {
+        "simulator": false
+      }
+    }
   },
   "submit": {
     "production": {

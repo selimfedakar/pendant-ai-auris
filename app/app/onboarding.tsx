@@ -1,20 +1,28 @@
 import React, { useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Dimensions,
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
+import { deviceCodeService } from '../services/DeviceCodeService';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const GOLD = '#C9A84C';
 const BG = '#0A0A0A';
 const ONBOARDING_KEY = '@auris:onboarding_complete';
+
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL ?? 'https://auris-backend.aurisapi.workers.dev';
+const AURIS_API_KEY = process.env.EXPO_PUBLIC_AURIS_API_KEY ?? '';
 
 // ---------------------------------------------------------------------------
 // Slide icons — pure RN shapes, no third-party icon deps
@@ -54,10 +62,20 @@ function VisionIcon() {
   );
 }
 
+/** Final slide: Activation — padlock ring with keyhole */
+function ActivateIcon() {
+  return (
+    <View style={iconStyles.activateOuter}>
+      <View style={iconStyles.activateRing} />
+      <View style={iconStyles.activateKeyhole} />
+    </View>
+  );
+}
+
 // ---------------------------------------------------------------------------
-// Slide data
+// Info slide data (the activation step is rendered separately as the last page)
 // ---------------------------------------------------------------------------
-const SLIDES = [
+const INFO_SLIDES = [
   {
     Icon: SoloIcon,
     title: 'Your AI Companion',
@@ -75,36 +93,99 @@ const SLIDES = [
   },
 ];
 
+// The activation gate occupies the last page of the pager.
+const TOTAL_PAGES = INFO_SLIDES.length + 1;
+const ACTIVATE_INDEX = INFO_SLIDES.length;
+
 // ---------------------------------------------------------------------------
-// Main onboarding screen
+// Main onboarding screen — info slides followed by the access-code gate
 // ---------------------------------------------------------------------------
 export default function OnboardingScreen() {
   const scrollRef = useRef<ScrollView>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
+
+  // Activation gate state
+  const [code, setCode] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [focused, setFocused] = useState(false);
 
   const handleScroll = (e: { nativeEvent: { contentOffset: { x: number } } }) => {
     const newIndex = Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH);
     setCurrentIndex(newIndex);
   };
 
+  const goToPage = (index: number) => {
+    scrollRef.current?.scrollTo({ x: index * SCREEN_WIDTH, animated: true });
+    setCurrentIndex(index);
+  };
+
   const handleNext = () => {
-    const nextIndex = currentIndex + 1;
-    if (nextIndex < SLIDES.length) {
-      scrollRef.current?.scrollTo({ x: nextIndex * SCREEN_WIDTH, animated: true });
-      setCurrentIndex(nextIndex);
+    if (currentIndex + 1 < TOTAL_PAGES) {
+      goToPage(currentIndex + 1);
     }
   };
 
-  const handleGetStarted = async () => {
+  // Persist completion + the unlocking code, then enter the app.
+  const completeAndEnter = async (validatedCode: string) => {
+    await deviceCodeService.setCode(validatedCode);
     await AsyncStorage.setItem(ONBOARDING_KEY, '1');
     router.replace('/(tabs)');
   };
 
-  const isLast = currentIndex === SLIDES.length - 1;
+  const handleAuthorize = async () => {
+    const normalized = code.trim().toUpperCase();
+    if (!normalized) {
+      setError('Please enter your access code.');
+      return;
+    }
+
+    // Admin code bypasses network validation — used by the team before the
+    // pendant ships. Customers receive AUR-XXXXXX codes in the product booklet.
+    if (normalized === '003') {
+      await completeAndEnter(normalized);
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/v1/validate-code`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Auris-Key': AURIS_API_KEY,
+        },
+        body: JSON.stringify({ code: normalized }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server error: ${response.status}`);
+      }
+
+      const data = (await response.json()) as { valid: boolean; type?: string };
+      if (data.valid) {
+        await completeAndEnter(normalized);
+      } else {
+        setError('Invalid code. Check your product booklet.');
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Connection failed.';
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const isActivatePage = currentIndex === ACTIVATE_INDEX;
 
   return (
-    <View style={styles.root}>
-      {/* Slides */}
+    <KeyboardAvoidingView
+      style={styles.root}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      {/* Pages */}
       <ScrollView
         ref={scrollRef}
         horizontal
@@ -112,30 +193,75 @@ export default function OnboardingScreen() {
         showsHorizontalScrollIndicator={false}
         onMomentumScrollEnd={handleScroll}
         scrollEventThrottle={16}
+        keyboardShouldPersistTaps="handled"
         style={styles.scrollView}
       >
-        {SLIDES.map((slide, i) => {
+        {/* Info slides */}
+        {INFO_SLIDES.map((slide, i) => {
           const { Icon } = slide;
           return (
             <View key={i} style={styles.slide}>
-              {/* Icon area */}
               <View style={styles.iconArea}>
                 <Icon />
               </View>
-
-              {/* Text */}
               <Text style={styles.title}>{slide.title}</Text>
               <Text style={styles.subtitle}>{slide.subtitle}</Text>
             </View>
           );
         })}
+
+        {/* Activation gate — the final page */}
+        <View style={styles.slide}>
+          <View style={styles.iconArea}>
+            <ActivateIcon />
+          </View>
+          <Text style={styles.title}>Activate Auris</Text>
+          <Text style={styles.subtitle}>
+            Enter the access code from your product booklet to unlock Auris.
+          </Text>
+
+          <View style={styles.gate}>
+            <TextInput
+              style={[styles.input, focused && styles.inputFocused]}
+              value={code}
+              onChangeText={(t) => {
+                setCode(t);
+                setError('');
+              }}
+              onFocus={() => setFocused(true)}
+              onBlur={() => setFocused(false)}
+              placeholder="ENTER ACCESS CODE"
+              placeholderTextColor="#444"
+              autoCapitalize="characters"
+              autoCorrect={false}
+              maxLength={10}
+              textAlign="center"
+              returnKeyType="done"
+              onSubmitEditing={handleAuthorize}
+              editable={!loading}
+            />
+            {error ? <Text style={styles.errorText}>{error}</Text> : <View style={styles.errorSpacer} />}
+            <TouchableOpacity
+              style={[styles.button, loading && styles.buttonDisabled]}
+              onPress={handleAuthorize}
+              activeOpacity={0.82}
+              disabled={loading}
+            >
+              {loading ? (
+                <ActivityIndicator color="#0A0A0A" />
+              ) : (
+                <Text style={styles.buttonText}>AUTHORIZE ACCESS</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
       </ScrollView>
 
       {/* Bottom controls */}
       <View style={styles.bottomArea}>
         {/* Dot indicators */}
         <View style={styles.dotsRow}>
-          {SLIDES.map((_, i) => (
+          {Array.from({ length: TOTAL_PAGES }).map((_, i) => (
             <View
               key={i}
               style={[styles.dot, i === currentIndex ? styles.dotActive : styles.dotInactive]}
@@ -143,18 +269,14 @@ export default function OnboardingScreen() {
           ))}
         </View>
 
-        {/* CTA button */}
-        <TouchableOpacity
-          style={styles.button}
-          onPress={isLast ? handleGetStarted : handleNext}
-          activeOpacity={0.82}
-        >
-          <Text style={styles.buttonText}>
-            {isLast ? 'GET STARTED' : 'NEXT'}
-          </Text>
-        </TouchableOpacity>
+        {/* NEXT button only on info slides; the activation page uses its inline button */}
+        {!isActivatePage && (
+          <TouchableOpacity style={styles.button} onPress={handleNext} activeOpacity={0.82}>
+            <Text style={styles.buttonText}>NEXT</Text>
+          </TouchableOpacity>
+        )}
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -196,6 +318,46 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     textAlign: 'center',
   },
+  // Activation gate (below the last slide's text)
+  gate: {
+    width: '100%',
+    marginTop: 36,
+    alignItems: 'center',
+  },
+  input: {
+    width: '100%',
+    height: 52,
+    backgroundColor: '#0a0a0a',
+    borderWidth: 1,
+    borderColor: '#1f1f1f',
+    borderRadius: 6,
+    color: GOLD,
+    fontSize: 16,
+    fontFamily: Platform.OS === 'ios' ? 'Courier New' : 'monospace',
+    letterSpacing: 4,
+    textAlign: 'center',
+    paddingHorizontal: 16,
+  },
+  inputFocused: {
+    borderColor: GOLD,
+    shadowColor: GOLD,
+    shadowOffset: { width: 0, height: 0 },
+    shadowRadius: 8,
+    shadowOpacity: 0.6,
+  },
+  errorText: {
+    color: '#FF3B3B',
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 12,
+    marginBottom: 4,
+    minHeight: 18,
+  },
+  errorSpacer: {
+    height: 18,
+    marginTop: 12,
+    marginBottom: 4,
+  },
   bottomArea: {
     paddingHorizontal: 32,
     paddingBottom: 60,
@@ -225,6 +387,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
   buttonText: {
     color: '#0A0A0A',
@@ -339,6 +504,36 @@ const iconStyles = StyleSheet.create({
     shadowColor: GOLD,
     shadowOffset: { width: 0, height: 0 },
     shadowRadius: 6,
+    shadowOpacity: 1,
+  },
+
+  // Activation: padlock ring with keyhole
+  activateOuter: {
+    width: 80,
+    height: 80,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  activateRing: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    borderWidth: 2,
+    borderColor: GOLD,
+    shadowColor: GOLD,
+    shadowOffset: { width: 0, height: 0 },
+    shadowRadius: 12,
+    shadowOpacity: 0.8,
+  },
+  activateKeyhole: {
+    position: 'absolute',
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: GOLD,
+    shadowColor: GOLD,
+    shadowOffset: { width: 0, height: 0 },
+    shadowRadius: 8,
     shadowOpacity: 1,
   },
 });

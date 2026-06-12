@@ -66,7 +66,9 @@ class NotificationService {
 
     // Required in expo-notifications v56 to display alerts while the app is in the foreground.
     this.receivedSubscription = Notifications.addNotificationReceivedListener((notification) => {
-      console.log('[Notification] received in foreground:', notification.request.content.title);
+      if (__DEV__) {
+        console.log('[Notification] received in foreground:', notification.request.content.title);
+      }
     });
 
     this.ready = true;

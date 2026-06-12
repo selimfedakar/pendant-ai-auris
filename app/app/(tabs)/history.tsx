@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { View, Text, StyleSheet, Pressable, Modal, ScrollView, SectionList } from 'react-native';
 import Animated, {
   useSharedValue,
@@ -188,9 +189,11 @@ export default function HistoryScreen() {
     },
   });
 
-  useEffect(() => {
-    historyService.load().then(setHistory);
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      historyService.load().then(setHistory);
+    }, []),
+  );
 
   const sections = useMemo(() => groupHistory(history), [history]);
 

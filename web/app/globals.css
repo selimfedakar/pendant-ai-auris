@@ -1,0 +1,108 @@
+@import "tailwindcss";
+
+/*
+  Auris — design tokens (warm luminous dark).
+  Tailwind v4 reads these via @theme, exposing utilities like bg-base, text-gold, etc.
+*/
+@theme {
+  --color-base: #0a0a0b;
+  --color-panel: #141416;
+  --color-elevated: #1b1b1e;
+  --color-gold: #e8b84b;
+  --color-glow: #ffd98a;
+  --color-fg: #f5f5f0;
+  --color-muted: #9a9a92;
+  --color-hairline: rgba(255, 255, 255, 0.08);
+
+  --font-display: var(--font-sora);
+  --font-body: var(--font-inter);
+
+  --animate-ring: ring-pulse 4s ease-out infinite;
+  --animate-breathe: breathe 6s ease-in-out infinite;
+
+  @keyframes ring-pulse {
+    0% {
+      transform: scale(0.5);
+      opacity: 0;
+    }
+    15% {
+      opacity: 0.7;
+    }
+    100% {
+      transform: scale(2.4);
+      opacity: 0;
+    }
+  }
+
+  @keyframes breathe {
+    0%,
+    100% {
+      transform: scale(1);
+      opacity: 0.9;
+    }
+    50% {
+      transform: scale(1.08);
+      opacity: 1;
+    }
+  }
+}
+
+html {
+  background: var(--color-base);
+  color: var(--color-fg);
+  /* Lenis drives scrolling; keep native smooth off so it doesn't fight the rAF loop. */
+  scroll-behavior: auto;
+}
+
+body {
+  font-family: var(--font-body), system-ui, sans-serif;
+  background: var(--color-base);
+  color: var(--color-fg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+::selection {
+  background: rgba(232, 184, 75, 0.25);
+  color: var(--color-glow);
+}
+
+/* Lenis recommended baseline (smooth scroll container). */
+html.lenis,
+html.lenis body {
+  height: auto;
+}
+
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+
+.lenis.lenis-stopped {
+  overflow: hidden;
+}
+
+/* Respect reduced motion — freeze the signature pulses, keep all content. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Thin gold scrollbar to match the identity (non-essential, progressive). */
+@media (pointer: fine) {
+  ::-webkit-scrollbar {
+    width: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--color-base);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(232, 184, 75, 0.25);
+    border-radius: 8px;
+  }
+}

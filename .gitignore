@@ -9,6 +9,9 @@ app/web-build/
 # Cloudflare
 backend/.wrangler/
 
+# PlatformIO (firmware build artifacts)
+firmware/.pio/
+
 # Environment
 .env
 .env.local

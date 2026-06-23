@@ -25,16 +25,28 @@ const PRINCIPLES = [
   },
 ];
 
-const TEAM = [
+type TeamLink = {
+  type: "github" | "linkedin" | "website";
+  href: string;
+  label: string;
+  featured?: boolean;
+};
+
+const TEAM: {
+  name: string;
+  role: string;
+  place: string;
+  photo: string;
+  body: string;
+  links: TeamLink[];
+}[] = [
   {
     name: "Mete Selçuk Şimşek",
     role: "Co-founder & CEO",
     place: "Boston",
     photo: "/team/mete.jpeg",
     body: "The driving force behind Auris's vision and commercial execution. He shapes the product story and the brand, and leads investor relations, partnerships, and go-to-market — and he had the first working prototype on day one.",
-    // Selim: replace REPLACE_ME with Mete's real LinkedIn URL before launch
-    linkedin: "https://www.linkedin.com/in/REPLACE_ME",
-    github: null,
+    links: [],
   },
   {
     name: "Ahmet Selim Fedakar",
@@ -42,9 +54,10 @@ const TEAM = [
     place: "Los Angeles",
     photo: "/team/selim.jpeg",
     body: "Translates a complex architecture into something you simply wear. He leads Auris's entire technical stack — the device integration, the voice pipelines, and the app that ties the pendant to the cloud. If it boots, listens, or connects, he built it.",
-    // Selim: replace REPLACE_ME with your real LinkedIn URL before launch
-    linkedin: "https://www.linkedin.com/in/REPLACE_ME",
-    github: "https://github.com/selimfedakar",
+    links: [
+      { type: "github", href: "https://github.com/selimfedakar", label: "GitHub", featured: true },
+      { type: "linkedin", href: "https://www.linkedin.com/in/ahmet-selim-fedakar/", label: "LinkedIn" },
+    ],
   },
   {
     name: "Atilla Kaan Alkan",
@@ -52,9 +65,11 @@ const TEAM = [
     place: "Harvard — Cambridge, MA",
     photo: "/team/atilla.jpeg",
     body: "Owns the intelligence behind Auris. He designs the model architecture, fine-tunes the foundation models on the voice and vision pipelines, and works out the compute trade-offs that let ambient understanding run fast, cheap, and reliably at scale. An NLP PhD now doing AI research at the Harvard-Smithsonian Center for Astrophysics, he's the mind behind the voice.",
-    // Selim: replace REPLACE_ME with Atilla's real LinkedIn URL before launch
-    linkedin: "https://www.linkedin.com/in/REPLACE_ME",
-    github: "https://github.com/AtillaKaanAlkan",
+    links: [
+      { type: "github", href: "https://github.com/AtillaKaanAlkan", label: "GitHub", featured: true },
+      { type: "website", href: "https://atillaalkan.com/", label: "Website" },
+      { type: "linkedin", href: "https://www.linkedin.com/in/atilla-kaan-alkan-081b65194/", label: "LinkedIn" },
+    ],
   },
 ];
 
@@ -69,6 +84,24 @@ const GitHubIcon = () => (
     <path d="M12 .5a11.5 11.5 0 00-3.64 22.42c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.54-3.88-1.54-.53-1.34-1.3-1.7-1.3-1.7-1.06-.72.08-.71.08-.71 1.17.08 1.79 1.2 1.79 1.2 1.04 1.79 2.73 1.27 3.4.97.1-.76.41-1.27.74-1.56-2.56-.29-5.25-1.28-5.25-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 015.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.43-2.69 5.41-5.26 5.69.42.36.8 1.08.8 2.18v3.23c0 .31.21.67.8.56A11.5 11.5 0 0012 .5z" />
   </svg>
 );
+
+const WebsiteIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+    <circle cx="12" cy="12" r="9.5" />
+    <path d="M2.5 12h19M12 2.5c2.6 2.6 4 6 4 9.5s-1.4 6.9-4 9.5c-2.6-2.6-4-6-4-9.5s1.4-6.9 4-9.5z" />
+  </svg>
+);
+
+const StarBadge = () => (
+  <span className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-gold text-base shadow-[0_0_8px_rgba(232,184,75,0.55)]">
+    <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 2l2.9 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14l-5-4.87 7.1-1.01L12 2z" />
+    </svg>
+  </span>
+);
+
+const LinkIcon = ({ type }: { type: TeamLink["type"] }) =>
+  type === "github" ? <GitHubIcon /> : type === "linkedin" ? <LinkedInIcon /> : <WebsiteIcon />;
 
 export default function AboutPage() {
   return (
@@ -162,28 +195,34 @@ export default function AboutPage() {
                     {m.place}
                   </p>
                   <p className="mt-4 text-sm text-muted">{m.body}</p>
-                  <div className="mt-5 flex flex-wrap gap-3">
-                    {m.linkedin && (
-                      <a
-                        href={m.linkedin}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-2 rounded-full border border-hairline px-3 py-1.5 font-mono text-xs text-muted transition-colors hover:border-gold hover:text-fg"
-                      >
-                        <LinkedInIcon /> LinkedIn
-                      </a>
-                    )}
-                    {m.github && (
-                      <a
-                        href={m.github}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-2 rounded-full border border-hairline px-3 py-1.5 font-mono text-xs text-muted transition-colors hover:border-gold hover:text-fg"
-                      >
-                        <GitHubIcon /> GitHub
-                      </a>
-                    )}
-                  </div>
+                  {m.links.length > 0 && (
+                    <div className="mt-5 flex flex-wrap items-center gap-3">
+                      {m.links.map((link) =>
+                        link.featured ? (
+                          <a
+                            key={link.type}
+                            href={link.href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="relative inline-flex items-center gap-2 rounded-full border border-gold/60 bg-gold/10 px-3.5 py-1.5 font-mono text-xs font-medium text-fg shadow-[0_0_14px_rgba(232,184,75,0.18)] transition-colors hover:border-gold hover:bg-gold/20"
+                          >
+                            <StarBadge />
+                            <LinkIcon type={link.type} /> {link.label}
+                          </a>
+                        ) : (
+                          <a
+                            key={link.type}
+                            href={link.href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-2 rounded-full border border-hairline px-3 py-1.5 font-mono text-xs text-muted transition-colors hover:border-gold hover:text-fg"
+                          >
+                            <LinkIcon type={link.type} /> {link.label}
+                          </a>
+                        )
+                      )}
+                    </div>
+                  )}
                 </div>
               </Reveal>
             ))}

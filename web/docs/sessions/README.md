@@ -16,6 +16,7 @@ It mirrors the convention of the main app/backend journal in `../../docs/session
 | 02 | [Pendant, Live Reserve & Responsive](02-pendant-reserve-and-responsive.md) | SVG pendant, public /reserve waitlist endpoint, breakpoint polish |
 | 03 | [Multi-Page Site & Working Navigation](03-multipage-and-navigation.md) | Stage 3: real pendant in hero, global Nav/Footer in layout, How-it-works / Specs / About / Privacy / Terms pages, route-aware nav with mobile menu + scroll progress |
 | 04 | [Conversion, Trust & Discoverability](04-conversion-trust-and-discoverability.md) | Stage 4: live waitlist counter (`/reserve/count`), FAQ, expectation copy, generated OG card + orb favicon, SEO (sitemap/robots/JSON-LD), Plausible, a11y focus ring, hero cursor parallax + cross-route fade, excar-style team cards |
+| 05 | [Team Links & Conversion Reinstated](05-team-links-and-conversion-reinstated.md) | Real team social links (GitHub featured over LinkedIn, Atilla's site, Mete link-less); re-instated the reverted Stage-4 conversion bundle — live waitlist counter consuming `/reserve/count`, `alreadyReserved` success state, a11y focus ring, route scroll-reset |
 
 ## The stack (one line)
 

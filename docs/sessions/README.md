@@ -49,6 +49,7 @@ lets us upgrade the "brain" without ever touching what hangs around the user's n
 | 10 | [Website: Conversion, Trust & Discoverability](10-website-conversion-and-seo.md) | — | Waitlist counter, FAQ, OG card + orb favicon, SEO, Plausible, a11y, route fade |
 | 11 | [Website Go-Live: Backend Deploy & Verification](11-website-golive-and-backend-deploy.md) | — | Backend deploy, /reserve & /reserve/count live, end-to-end verification |
 | 12 | [Pendant Hands-Free Trigger](12-pendant-hands-free-trigger.md) | Jun 22 | Board mic over BLE, on-board button event, press-to-talk |
+| 13 | [Website: Team Links & Conversion Reinstated](13-website-team-links-and-conversion-reinstated.md) | Jun 23 | Real team social links (GitHub featured), reinstated waitlist counter / alreadyReserved / a11y / scroll-reset |
 
 ## Live infrastructure (current)
 

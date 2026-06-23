@@ -18,6 +18,9 @@
  *   0x01  START_STREAM
  *   0x02  STOP_STREAM
  *   0x03  STATUS_PING  (Serial only — no BLE reply yet)
+ *
+ * Event char (board -> phone, NOTIFY)
+ *   0x10  BUTTON_PRESS  (on-board BOOT button GPIO0 — hands-free press-to-talk)
  */
 
 #include <Arduino.h>
@@ -43,10 +46,15 @@ static constexpr size_t NOTIFY_BYTES     = SEQ_BYTES + AUDIO_PER_NOTIFY;  // 242
 static const char* SVC_UUID   = "12345678-1234-1234-1234-123456789abc";
 static const char* AUDIO_UUID = "12345678-1234-1234-1234-123456789abd";
 static const char* CTRL_UUID  = "12345678-1234-1234-1234-123456789abe";
+static const char* EVENT_UUID = "12345678-1234-1234-1234-123456789abf";
 
 static NimBLEServer*          pServer    = nullptr;
 static NimBLECharacteristic*  pAudioChar = nullptr;
 static NimBLECharacteristic*  pCtrlChar  = nullptr;
+static NimBLECharacteristic*  pEventChar = nullptr;
+
+// Board -> phone event codes
+static constexpr uint8_t EV_BUTTON_PRESS = 0x10;
 
 static volatile bool gConnected = false;
 static volatile bool gStreaming  = false;
@@ -142,6 +150,7 @@ static void ble_init() {
     pAudioChar = pSvc->createCharacteristic(AUDIO_UUID, NIMBLE_PROPERTY::NOTIFY);
     pCtrlChar  = pSvc->createCharacteristic(CTRL_UUID,  NIMBLE_PROPERTY::WRITE_NR);
     pCtrlChar->setCallbacks(new CtrlCB());
+    pEventChar = pSvc->createCharacteristic(EVENT_UUID, NIMBLE_PROPERTY::NOTIFY);
 
     pSvc->start();
 
@@ -192,7 +201,26 @@ void setup() {
     Serial.println("[AURIS] ready");
 }
 
+// On-board BOOT button (GPIO0, active-low). Detect a clean press edge and
+// notify the phone so the user can talk hands-free from the pendant itself.
+static void poll_button() {
+    static bool          lastLevel = HIGH;
+    static unsigned long lastEdgeMs = 0;
+    const bool level = digitalRead(BTN_BOOT_PIN);
+    if (lastLevel == HIGH && level == LOW && (millis() - lastEdgeMs) > 250) {
+        lastEdgeMs = millis();
+        Serial.println("[BTN] press");
+        if (gConnected && pEventChar && pServer->getConnectedCount() > 0) {
+            const uint8_t ev = EV_BUTTON_PRESS;
+            pEventChar->setValue(&ev, 1);
+            pEventChar->notify();
+        }
+    }
+    lastLevel = level;
+}
+
 void loop() {
+    poll_button();
     if (gConnected) {
         gLastConnMs = millis();
         gStreaming ? stream_chunk() : delay(10);

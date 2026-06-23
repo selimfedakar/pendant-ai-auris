@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
+import { usePathname } from "next/navigation";
 import Lenis from "lenis";
 import { gsap, ScrollTrigger, prefersReducedMotion } from "@/lib/gsap";
 
@@ -16,6 +17,9 @@ export default function SmoothScroll({
 }: {
   children: React.ReactNode;
 }) {
+  const lenisRef = useRef<Lenis | null>(null);
+  const pathname = usePathname();
+
   useEffect(() => {
     if (prefersReducedMotion()) return;
 
@@ -24,6 +28,7 @@ export default function SmoothScroll({
       easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
       smoothWheel: true,
     });
+    lenisRef.current = lenis;
 
     // Let GSAP's ticker drive Lenis so scroll-scrub animations stay in lockstep.
     lenis.on("scroll", ScrollTrigger.update);
@@ -37,8 +42,19 @@ export default function SmoothScroll({
     return () => {
       gsap.ticker.remove(update);
       lenis.destroy();
+      lenisRef.current = null;
     };
   }, []);
+
+  // Jump back to the top on every route change (Lenis suppresses the browser's
+  // native scroll restoration, so we do it explicitly).
+  useEffect(() => {
+    if (lenisRef.current) {
+      lenisRef.current.scrollTo(0, { immediate: true });
+    } else {
+      window.scrollTo(0, 0);
+    }
+  }, [pathname]);
 
   return <>{children}</>;
 }

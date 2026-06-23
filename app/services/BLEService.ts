@@ -12,6 +12,10 @@ export type BLEAudioChunk = {
 const AURIS_SERVICE_UUID = '12345678-1234-1234-1234-123456789abc';
 const AUDIO_CHAR_UUID    = '12345678-1234-1234-1234-123456789abd';
 const CTRL_CHAR_UUID     = '12345678-1234-1234-1234-123456789abe';
+const EVENT_CHAR_UUID    = '12345678-1234-1234-1234-123456789abf';
+
+// Board -> phone event codes (firmware main.cpp)
+const EV_BUTTON_PRESS = 0x10;
 
 // Firmware sends 240 bytes of PCM per notify; 3200 bytes = 100 ms at 16 kHz 16-bit mono
 const FLUSH_THRESHOLD_BYTES = 3200;
@@ -20,6 +24,7 @@ class BLEService {
   private manager: BleManager | null = null;
   private device: Device | null = null;
   private audioSub: Subscription | null = null;
+  private buttonSub: Subscription | null = null;
   private connectionState: BLEConnectionState = 'disconnected';
 
   private pcmChunks: Uint8Array[] = [];
@@ -28,6 +33,7 @@ class BLEService {
   private onChunkCallback: ((chunk: BLEAudioChunk) => void) | null = null;
   private onFlushCallback: ((pcm: Uint8Array) => void) | null = null;
   private onStateChangeCallback: ((state: BLEConnectionState) => void) | null = null;
+  private onButtonCallback: (() => void) | null = null;
 
   private getManager(): BleManager {
     if (!this.manager) this.manager = new BleManager();
@@ -41,6 +47,8 @@ class BLEService {
   onAudioChunk(cb: (chunk: BLEAudioChunk) => void): void { this.onChunkCallback = cb; }
   // Called every ~100 ms with a 3200-byte raw PCM buffer (16 kHz, 16-bit, mono LE)
   onAudioFlush(cb: (pcm: Uint8Array) => void): void { this.onFlushCallback = cb; }
+  // Fired when the user presses the on-board button on the pendant (hands-free trigger)
+  onButtonPress(cb: () => void): void { this.onButtonCallback = cb; }
 
   private setState(next: BLEConnectionState): void {
     this.connectionState = next;
@@ -80,9 +88,21 @@ class BLEService {
             this.device = connected;
             this.setState('connected');
 
+            // Subscribe to board -> phone events (on-board button press)
+            this.buttonSub = connected.monitorCharacteristicForService(
+              AURIS_SERVICE_UUID,
+              EVENT_CHAR_UUID,
+              (error, char) => {
+                if (error || !char?.value) return;
+                const raw = Buffer.from(char.value, 'base64');
+                if (raw.length >= 1 && raw[0] === EV_BUTTON_PRESS) this.onButtonCallback?.();
+              },
+            );
+
             connected.onDisconnected((_err, _dev) => {
               this.device = null;
               this.audioSub = null;
+              this.buttonSub = null;
               this.setState('disconnected');
             });
 
@@ -134,6 +154,8 @@ class BLEService {
   async stopStream(): Promise<void> {
     this.audioSub?.remove();
     this.audioSub = null;
+    // NOTE: buttonSub is intentionally kept alive across streams so the user
+    // can press the pendant button again to start the next turn.
 
     if (this.device && this.isConnected()) {
       try {
@@ -149,6 +171,8 @@ class BLEService {
 
   async disconnect(): Promise<void> {
     await this.stopStream().catch(() => {});
+    this.buttonSub?.remove();
+    this.buttonSub = null;
     if (this.device) {
       try { await this.device.cancelConnection(); } catch { /* ignore */ }
       this.device = null;

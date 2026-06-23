@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { reserve } from "@/lib/reserve";
+import WaitlistCount from "@/components/WaitlistCount";
 
 type Status = "idle" | "loading" | "success" | "error";
 
@@ -15,6 +16,7 @@ export default function ReserveForm({ compact = false }: { compact?: boolean }) 
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState("");
+  const [alreadyReserved, setAlreadyReserved] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -22,7 +24,8 @@ export default function ReserveForm({ compact = false }: { compact?: boolean }) 
     setStatus("loading");
     setError("");
     try {
-      await reserve(email);
+      const { alreadyReserved } = await reserve(email);
+      setAlreadyReserved(alreadyReserved);
       setStatus("success");
     } catch (err) {
       setStatus("error");
@@ -38,7 +41,9 @@ export default function ReserveForm({ compact = false }: { compact?: boolean }) 
         transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
         className="mx-auto max-w-md rounded-full border border-gold/40 bg-panel/60 px-6 py-4 text-center text-sm text-glow"
       >
-        You&apos;re on the list. We&apos;ll be in touch when Auris ships.
+        {alreadyReserved
+          ? "You're already on the list — we'll be in touch when Auris ships."
+          : "You're on the list. We'll be in touch when Auris ships."}
       </motion.div>
     );
   }
@@ -72,9 +77,10 @@ export default function ReserveForm({ compact = false }: { compact?: boolean }) 
         <p className="mt-4 text-center text-xs text-red-400">{error}</p>
       ) : (
         <p className="mt-4 text-center text-xs text-muted/60">
-          No charge today. We&apos;ll email you when it ships.
+          No charge today. One email when it ships — nothing else.
         </p>
       )}
+      {!compact && <WaitlistCount />}
     </div>
   );
 }

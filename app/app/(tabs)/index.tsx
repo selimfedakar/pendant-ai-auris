@@ -79,6 +79,11 @@ export default function HomeScreen() {
   const isCapturingRef = useRef(false);
   const userIdRef = useRef<string>('user-local');
 
+  // Pendant (BLE) audio path: accumulate streamed PCM, press-to-talk toggle.
+  const pendantPcmRef = useRef<Uint8Array[]>([]);
+  const pendantStreamingRef = useRef(false);
+  const pendantTriggerRef = useRef<() => void>(() => {});
+
   const [bleState, setBleState] = useState<BLEConnectionState>(bleService.getConnectionState());
   const [contextualSheetVisible, setContextualSheetVisible] = useState(false);
   const [activeModule, setActiveModule] = useState<string>('visual');
@@ -553,6 +558,108 @@ export default function HomeScreen() {
     }
   }, [profile, mode, appendTodos, appendEvents, capturedImageBase64, addStreamingMessage]);
 
+  // Merge the streamed pendant PCM and run it through the raw-PCM backend path.
+  // The /v1/process-audio-pcm endpoint returns no audio, so TTS is on-device.
+  const processPendantAudio = useCallback(async () => {
+    if (isProcessingRef.current) return;
+    isProcessingRef.current = true;
+    try {
+      setOrbState('processing');
+
+      const total = pendantPcmRef.current.reduce((n, c) => n + c.length, 0);
+      // 6400 bytes = ~200 ms at 16 kHz 16-bit mono — anything less is noise/misfire.
+      if (total < 6400) {
+        pendantPcmRef.current = [];
+        setOrbState('idle');
+        isProcessingRef.current = false;
+        addMessage('auris', 'Recording too short — press and speak.');
+        return;
+      }
+
+      const merged = new Uint8Array(total);
+      let offset = 0;
+      for (const chunk of pendantPcmRef.current) { merged.set(chunk, offset); offset += chunk.length; }
+      pendantPcmRef.current = [];
+
+      const result = await backendService.processPCM(merged, userIdRef.current, profile.personality);
+      const transcript = String(result.transcript ?? '');
+      const reply = String(result.reply ?? '');
+      const todos = Array.isArray(result.todos) ? result.todos : [];
+      const events = Array.isArray(result.events) ? result.events : [];
+
+      if (transcript) addMessage('user', transcript);
+
+      await Promise.all([
+        reply
+          ? historyService.append({
+              id: Date.now().toString(),
+              summary: reply.split(/[.!?]/)[0]?.trim() || 'Conversation',
+              preview: reply,
+              mode,
+              ts: Date.now(),
+            })
+          : Promise.resolve(),
+        appendTodos(todos),
+        events.length > 0
+          ? (() => { setPendingCalendarAction(events[0]!); return Promise.resolve(); })()
+          : Promise.resolve(),
+      ]);
+
+      if (reply) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+        setOrbState('speaking');
+        audioService.speakText(reply).catch((e) => console.warn('[Auris] device TTS:', e));
+        await addStreamingMessage(reply);
+      }
+
+      setOrbState('idle');
+      isProcessingRef.current = false;
+      setAudioUnavailable(false);
+    } catch (err: any) {
+      const msg = String(err?.message ?? 'Something went wrong');
+      setError(msg);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      addMessage('auris', `(Error: ${msg})`);
+      setOrbState('idle');
+      isProcessingRef.current = false;
+    }
+  }, [profile, mode, appendTodos, addStreamingMessage]);
+
+  // Press-to-talk toggle for the pendant: 1st press starts streaming the board
+  // mic over BLE, 2nd press stops and processes. Same UX as the on-screen orb.
+  const handlePendantTrigger = useCallback(async () => {
+    if (mode === 'social') return;
+    if (!bleService.isConnected()) return;
+    if (isProcessingRef.current) return;
+
+    if (!pendantStreamingRef.current) {
+      pendantPcmRef.current = [];
+      pendantStreamingRef.current = true;
+      setError(null);
+      setOrbState('listening');
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+      try {
+        await bleService.startStream();
+      } catch (err: any) {
+        pendantStreamingRef.current = false;
+        setOrbState('idle');
+        setError(`Pendant stream failed: ${err?.message ?? 'unknown'}`);
+      }
+    } else {
+      pendantStreamingRef.current = false;
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+      try { await bleService.stopStream(); } catch { /* best effort */ }
+      await processPendantAudio();
+    }
+  }, [mode, processPendantAudio]);
+
+  // Register BLE callbacks once; route through a ref so the latest handler is used.
+  useEffect(() => { pendantTriggerRef.current = () => { handlePendantTrigger(); }; }, [handlePendantTrigger]);
+  useEffect(() => {
+    bleService.onAudioFlush((pcm) => { pendantPcmRef.current.push(pcm); });
+    bleService.onButtonPress(() => { pendantTriggerRef.current(); });
+  }, []);
+
   const calendarContextRef = useRef<string | undefined>(undefined);
   const emailContextRef = useRef<string | undefined>(undefined);
 
@@ -600,6 +707,13 @@ export default function HomeScreen() {
   const handleOrbPress = async () => {
     if (isProcessingRef.current || mode === 'social') return;
     setError(null);
+
+    // When the pendant is connected, the on-screen orb drives the board mic too
+    // (plain conversation). Email/Calendar still use the phone path for context.
+    if (bleService.isConnected() && activeModule !== 'email' && activeModule !== 'calendar') {
+      await handlePendantTrigger();
+      return;
+    }
 
     if (activeModule === 'email' && !gmailService.isAuthenticated()) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});

@@ -44,6 +44,10 @@ lets us upgrade the "brain" without ever touching what hangs around the user's n
 | 05 | [Calendar Sync, Canvas & Social Hardening](05-calendar-canvas-social-hardening.md) | Jun 2–6 | Calendar confirm card, draggable canvas, multilingual voice |
 | 06 | [Hardware Bridge: Firmware + BLE](06-hardware-bridge-firmware-ble.md) | Jun 7–8 | ESP32S3 firmware, BLE GATT client, PCM pipeline |
 | 07 | [App Store Readiness, Security & On-Device Voice](07-appstore-security-on-device-voice.md) | Jun 10–11 | Fail-closed auth, onboarding gate, expo-speech fallback |
+| 08 | [Marketing Site & Public Reserve Endpoint](08-marketing-site-and-reserve-endpoint.md) | — | Scroll-animated landing site, public /reserve waitlist endpoint |
+| 09 | [Website: Multi-Page Site & Navigation](09-website-multipage-and-navigation.md) | — | Real pendant hero, How-it-works / Specs / About / Privacy / Terms, route-aware nav |
+| 10 | [Website: Conversion, Trust & Discoverability](10-website-conversion-and-seo.md) | — | Waitlist counter, FAQ, OG card + orb favicon, SEO, Plausible, a11y, route fade |
+| 11 | [Website Go-Live: Backend Deploy & Verification](11-website-golive-and-backend-deploy.md) | — | Backend deploy, /reserve & /reserve/count live, end-to-end verification |
 | 12 | [Pendant Hands-Free Trigger](12-pendant-hands-free-trigger.md) | Jun 22 | Board mic over BLE, on-board button event, press-to-talk |
 
 ## Live infrastructure (current)

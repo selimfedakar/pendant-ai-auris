@@ -44,11 +44,12 @@ lets us upgrade the "brain" without ever touching what hangs around the user's n
 | 05 | [Calendar Sync, Canvas & Social Hardening](05-calendar-canvas-social-hardening.md) | Jun 2–6 | Calendar confirm card, draggable canvas, multilingual voice |
 | 06 | [Hardware Bridge: Firmware + BLE](06-hardware-bridge-firmware-ble.md) | Jun 7–8 | ESP32S3 firmware, BLE GATT client, PCM pipeline |
 | 07 | [App Store Readiness, Security & On-Device Voice](07-appstore-security-on-device-voice.md) | Jun 10–11 | Fail-closed auth, onboarding gate, expo-speech fallback |
+| 12 | [Pendant Hands-Free Trigger](12-pendant-hands-free-trigger.md) | Jun 22 | Board mic over BLE, on-board button event, press-to-talk |
 
 ## Live infrastructure (current)
 
 - **Backend:** `https://auris-backend.aurisapi.workers.dev` — Cloudflare Workers (Hono).
-  Latest deploy version `99746512` (Jun 11, rate limiting live).
+  Latest deploy version `c0df2644` (Jun 21, rate limiting + public `/reserve` & `/reserve/count` live).
 - **Repo:** `github.com/selimfedakar/pendant-ai-auris` (public).
 - **App:** Expo SDK 56 / RN 0.85.x, bundle id `com.aurisai.app`.
 - **Hardware:** Seeed XIAO ESP32S3 Sense (PlatformIO + Arduino, NimBLE).

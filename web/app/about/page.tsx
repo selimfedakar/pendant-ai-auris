@@ -92,12 +92,20 @@ const WebsiteIcon = () => (
   </svg>
 );
 
+// Sits on the corner of the featured GitHub button — a dark disc so the gold
+// star reads clearly against the gold button fill.
 const StarBadge = () => (
-  <span className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-gold text-base shadow-[0_0_8px_rgba(232,184,75,0.55)]">
-    <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+  <span className="absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full bg-base text-gold ring-1 ring-gold/70 shadow-[0_0_10px_rgba(232,184,75,0.6)]">
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <path d="M12 2l2.9 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14l-5-4.87 7.1-1.01L12 2z" />
     </svg>
   </span>
+);
+
+const ArrowUpRight = () => (
+  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M7 17L17 7M8 7h9v9" />
+  </svg>
 );
 
 const LinkIcon = ({ type }: { type: TeamLink["type"] }) =>
@@ -204,10 +212,12 @@ export default function AboutPage() {
                             href={link.href}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="relative inline-flex items-center gap-2 rounded-full border border-gold/60 bg-gold/10 px-3.5 py-1.5 font-mono text-xs font-medium text-fg shadow-[0_0_14px_rgba(232,184,75,0.18)] transition-colors hover:border-gold hover:bg-gold/20"
+                            aria-label={`${m.name} on ${link.label}`}
+                            className="relative inline-flex items-center gap-2 rounded-full bg-gold px-4 py-2 font-mono text-xs font-semibold text-base shadow-[0_0_22px_rgba(232,184,75,0.4)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_0_32px_rgba(232,184,75,0.62)]"
                           >
                             <StarBadge />
                             <LinkIcon type={link.type} /> {link.label}
+                            <ArrowUpRight />
                           </a>
                         ) : (
                           <a
